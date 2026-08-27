@@ -1,0 +1,13 @@
+{
+    "_comment": "Config for restore_pos_fix.py. It has no tuning settings of its own -- it always runs the same way -- so this file exists only for its opt-in debug-dump feature and its notice-display opt-out. Safe to delete if you never turn debug.enabled on or notice.display off; the processor falls back to defaults (debug off, notices shown) with no config file present at all.",
+    "_debug": "Writes a structured JSON snapshot of every toolchange this run annotated (or couldn't) -- line index, tool, the resolved X/Y/Z restore coordinate and which travel lines got commented out as redundant, or the reason a toolchange was left unpatched -- to a file. Exists so a 'why wasn't this toolchange annotated' question can be answered from exact real data instead of a screenshot or a description of one. Written on every run -- see helpers/debug_dump.py, the feature shared across every processor that opts in. Saved as restore_pos_fix_debug.json.",
+    "debug": {
+        "_enabled": "On by default. The file gets overwritten every run, so it always just reflects the latest gcode processed -- fine to leave on.",
+        "enabled": true
+    },
+    "_notice": "Whether this processor's own info/warning NOTICE messages ('Restore pos fix') show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code's ORCASTRATOR_LOG block either way -- this only tells the printer-side macro whether to actually print it, so nothing is lost from the file or from this processor's own debug dump. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out.",
+    "notice": {
+        "_display": "Whether this processor's own info/warning NOTICE messages show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code either way -- this only tells the printer-side macro whether to print it, so nothing is lost from the file or from a Debug dump if that's on, just muted on the console. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out. A genuine abort/refuse-to-print notice, if this processor ever emits one, is never muted by this setting.",
+        "display": true
+    }
+}

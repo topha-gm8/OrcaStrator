@@ -1,0 +1,93 @@
+{
+    "_comment": [
+        "Config for orcastrator.py -- the pipeline runner itself, not any",
+        "individual processor. Controls its progress window and error-",
+        "handling behavior. Missing/unreadable/invalid -> falls back to",
+        "built-in defaults field-by-field, so a broken value here can never",
+        "take down an actual export."
+    ],
+    "_show_progress_ui": "Whether the progress window appears at all during an export.",
+    "show_progress_ui": true,
+    "window": {
+        "_comment": "On-screen position of the progress window (size is automatic).",
+        "_position": "One of: top-left | top-right | bottom-left | bottom-right | center.",
+        "position": "center",
+        "_margin": "Pixel gap from the screen edge, only used by the corner position presets above.",
+        "margin": 40,
+        "remember_position": true
+    },
+    "auto_close": {
+        "_comment": "Optional auto-dismiss for the progress window after a fully successful run (no processor failures) -- applies even if an SVG preview kept it open for a look. A failed run always needs a manual Close regardless of this setting.",
+        "_enabled": "Off by default -- someone looking at an SVG preview shouldn't have the window vanish under them without opting in first. Clicking anywhere on the window while counting down cancels it for that run.",
+        "enabled": true,
+        "_seconds": "How many seconds after a fully successful run before the window auto-closes. Only used when enabled is true.",
+        "seconds": 30
+    },
+    "on_error": {
+        "_comment": "What happens when a processor in the pipeline fails.",
+        "_stop_on_error": "If true, stop running any further processors as soon as one fails. If false, keep running the rest of the pipeline and report all failures together at the end.",
+        "stop_on_error": false,
+        "_auto_abort_on_unexplained_failure": "If a processor exits non-zero without emitting its own 'abort' NOTICE explaining why, synthesize a generic one so the print still gets refused instead of silently continuing with an unexplained failure.",
+        "auto_abort_on_unexplained_failure": true
+    },
+    "_denylist": "Processor scripts (by filename) that should never run, even if present in post_processors/ -- e.g. a shared helper module dropped in there by mistake, or a processor you're deliberately disabling everywhere. Pick these from what's actually on disk in the settings GUI rather than typing filenames by hand -- an unrecognized name here is simply ignored, same as everywhere else in this file. For skipping a processor on just ONE specific OrcaSlicer profile instead of everywhere, use that profile's own \"--denylist=script.py\" post-processing argument instead of this.",
+    "denylist": [
+        "restore_pos_fix.py"
+    ],
+    "_explicit_order": "Processor scripts (by filename) that must run before anything else discovered, in this exact order -- for processors that are order-dependent. Anything not listed here still runs, just after everything that is, in alphabetical order. Pick these from what's actually on disk in the settings GUI rather than typing filenames by hand -- an unrecognized name here is simply logged and ignored.",
+    "explicit_order": [
+        "disable_unused_tool_temps.py"
+    ],
+    "_explicit_order_last": "The mirror image of explicit_order: processor scripts (by filename) that must run AFTER everything else discovered, in this exact order -- for a processor that needs the final state of the g-code once every other processor (including ones added later and never listed anywhere) has already run. Empty by default. If a name ends up in both explicit_order and explicit_order_last, explicit_order wins. Pick these from what's actually on disk in the settings GUI rather than typing filenames by hand.",
+    "explicit_order_last": [
+        "tool_temperature_graph.py",
+        "toolchange_heatmap.py",
+        "gcode_template_notice.py"
+    ],
+    "_gui_order": "Landing-page card order in the OrcaStrator Settings app itself (by gui/*.py filename) -- purely cosmetic, config_editor.pyw only, orcastrator.py's pipeline never reads this. OrcaStrator's own card always stays first regardless of what's listed here. Anything found but not listed here follows alphabetically after. Pick these from what's actually discovered in the settings GUI rather than typing filenames by hand -- an unrecognized name here is simply ignored.",
+    "gui_order": [],
+    "debug": {
+        "_comment": "Central debug-dump settings, shared by every OTHER processor that opts in (see helpers/debug_dump.py) -- NOT used by orcastrator.py itself.",
+        "_dir": "Directory any opted-in processor's debug dump gets written to, when that processor's own debug.enabled is true. Empty string (default) = no central directory -- each processor falls back to writing next to its own script, same as before this setting existed. Relative paths resolve against this folder (the OrcaStrator root), not post_processors/.",
+        "dir": "post_processors\\logs",
+        "_mode": "One of: single | multiple. single (default) = every processor's own debug dump overwrites the same <processor>_debug.json every run, exactly as this always worked. multiple = each run writes a new, separately-timestamped file for that processor instead, so a history of past runs is kept rather than just the latest. This is ONE central switch that applies to every opted-in processor the same way -- not a per-processor setting.",
+        "mode": "multiple",
+        "_cap": "Only used when mode is \"multiple\". Maximum number of saved dumps kept PER PROCESSOR before the oldest is deleted automatically (deletion happens right after a new dump is written). null = unlimited, every dump ever written is kept forever. Ignored entirely in \"single\" mode.",
+        "cap": 10
+    },
+    "sounds": {
+        "_comment": "Optional sound on completion of a run -- separate sounds for \"blocked\" (any processor failed, including a print-abort) and \"all clear\" (every processor succeeded). Both off by default. Each \"file\" is a NAME, not a path: OrcaStrator looks for that name in the assets/ folder and plays whatever it finds, regardless of extension -- \"error\" matches assets/error.wav, assets/error.mp3, assets/error.ogg, anything -- so swapping the sound is just replacing the file in assets/, no config edit needed unless you're also renaming it. Give the stem WITH an extension (e.g. \"my_error_sound.wav\") if you have more than one file sharing a name and need to be exact about which one plays.",
+        "on_error": {
+            "_enabled": "Plays when this run completed with at least one processor failure (which includes an abort -- see gcode_template_notice.py/dock_collision_guard.py). Off by default.",
+            "enabled": false,
+            "_file": "Name to look for in assets/, no extension needed. See the sounds._comment above for how the match works.",
+            "file": "error"
+        },
+        "on_success": {
+            "_enabled": "Plays when every processor in this run succeeded. Off by default.",
+            "enabled": false,
+            "_file": "Name to look for in assets/, no extension needed. See the sounds._comment above for how the match works.",
+            "file": "success"
+        }
+    },
+    "theme": {
+        "_comment": "Hex colors (#rrggbb) for the progress window's skin. Purely cosmetic.",
+        "_bg": "Window/frame background.",
+        "bg": "#2b2b2b",
+        "_panel_bg": "Recessed panels: the log text box, SVG preview canvases.",
+        "panel_bg": "#1e1e1e",
+        "_border": "Subtle borders/separators.",
+        "border": "#3f3f3f",
+        "_fg": "Primary text color.",
+        "fg": "#e6e6e6",
+        "_fg_dim": "Secondary/disabled text color.",
+        "fg_dim": "#9a9a9a",
+        "_accent": "The OrcaSlicer-style accent color used for the progress bar, active scrollbar, and the Close button once it's clickable.",
+        "accent": "#00A886",
+        "_accent_hover": "Accent color while hovered/active.",
+        "accent_hover": "#1DC2A4",
+        "_accent_fg": "Text/icon color drawn on top of the accent color.",
+        "accent_fg": "#ffffff",
+        "titlebar": "#1f1f1f"
+    }
+}

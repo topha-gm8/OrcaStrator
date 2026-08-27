@@ -1,0 +1,169 @@
+{
+    "_readme": "StealthChanger dock-clearance config for dock_collision_guard.py.",
+    "_debug": "Writes a structured JSON snapshot of every intermediate value this check computed on this run -- closest-approach point + its object attribution (even on an unremarkable OK run), EVERY toolchange/restore point's own hop-clearance calculation (not just the worst), final status/targets/messages -- to a file. Exists so a 'why didn't this do what I expected' question can be answered from exact real data instead of a screenshot or a description of one. Written on every run, not just failures. Saved as dock_collision_guard_debug.json (this feature is shared across processors now -- see helpers/debug_dump.py -- so the filename always carries the processor's own name rather than a fixed stealthchanger_debug.json, to avoid collisions if other processors' dumps land in the same folder).",
+    "debug": {
+        "_enabled": "On by default. The file gets overwritten every run, so it always just reflects the latest gcode processed -- fine to leave on.",
+        "enabled": true
+    },
+    "_notice": "Whether this processor's own info/warning NOTICE messages ('Dock check OK', config-read errors, etc) show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code's ORCASTRATOR_LOG block either way -- this only tells the printer-side macro whether to actually print it, so nothing is lost from the file or from this processor's own debug dump. Doesn't touch the actual dock-collision check at all -- an abort-level 'StealthChanger dock collision' notice is NEVER muted by this, regardless of the setting; it's the refuse-to-print mechanism itself, not just a message -- see helpers/notice.py. This only ever mutes the routine 'everything's fine' / non-fatal chatter, e.g. to declutter the console around a gcode_template_notice.py template you actually want to stand out.",
+    "notice": {
+        "_display": "Whether this processor's own info/warning NOTICE messages show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code either way -- this only tells the printer-side macro whether to print it, so nothing is lost from the file or from a Debug dump if that's on, just muted on the console. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out. A genuine abort/refuse-to-print notice, if this processor ever emits one, is never muted by this setting.",
+        "display": true
+    },
+    "_safe_y": "Y position (mm) at or beyond which there is no dock risk at all, regardless of Z height.",
+    "safe_y": 120.0,
+    "_boundary": "Piecewise-linear dock clearance envelope in the Y/Z plane. Each {y,z} point is the maximum safe Z height at that Y.\n**MUST** be sorted by Y ascending. For Y below the first point, that point's Z limit is used; for Y between the last point and safe_y, the last point's Z is used. How to calibrate: \n(1) jog the toolhead to the dock, \n(2) adjust Z and Y until the tool just clears with a small safety margin, \n(3) record that (Y,Z) as a boundary point, \n(4) repeat for as many points as needed to trace the real clearance curve, \n(5) set safe_y to the Y at which the print can never reach any dock.",
+    "boundary": [
+        {
+            "y": 0.0,
+            "z": 40.0
+        },
+        {
+            "y": 60.0,
+            "z": 40.0
+        },
+        {
+            "y": 80.0,
+            "z": 60.0
+        },
+        {
+            "y": 90.0,
+            "z": 230.0
+        },
+        {
+            "y": 100.0,
+            "z": 230.0
+        },
+        {
+            "y": 110.0,
+            "z": 240.0
+        }
+    ],
+    "_svg": "Optional console/PC visualization -- see dock_collision_guard.py. Everything below this point is inside the \"svg\" object.",
+    "svg": {
+        "_display": "Per-status destination toggle -- THE main control for where the visualization shows up. Keys are the 3 possible check outcomes; each value is one of 'off' | 'printer' | 'pc' | 'both'. \nno_collision: nothing of note happened. \nnear_miss: worst clearance was within near_miss_margin but no actual collision -- shown on the printer console so you see it next print, no urgent PC popup needed. collision: print was refused -- shown on the PC (OrcaStrator's own window, or the standalone browser popup if show_on_pc is also on) since you're sitting right there at export time. 'both' is available for any of the three if you want a status to show up in both places at once.",
+        "display": {
+            "no_collision": "pc",
+            "near_miss": "both",
+            "collision": "both"
+        },
+        "_show_on_pc": "Master on/off for the STANDALONE browser popup specifically (default false). This is IN ADDITION TO 'pc' needing to already be one of the current status's targets above -- both must be true. When run through orcastrator.py (the normal setup), OrcaStrator's own progress window already renders any 'pc'-targeted payload directly, no browser needed -- this is mainly for running dock_collision_guard.py standalone.",
+        "show_on_pc": false,
+        "_pc_svg_open": "Auto-open the standalone popup in the default browser (default true). Set false to just write the file silently, no browser tab.",
+        "pc_svg_open": true,
+        "_pc_svg_path": "Optional fixed output path for the standalone popup (e.g. a folder you keep an eye on). Empty string = a fixed file in the OS temp folder, overwritten each export.",
+        "pc_svg_path": "",
+        "_near_miss_margin": "mm of worst-case Z clearance that still counts as 'close' -- i.e. what makes a result 'near_miss' instead of 'no_collision'.",
+        "near_miss_margin": 5.0,
+        "_canvas_clip": "How much space the visualization shows beyond the no-go zone itself. One of 'tight' | 'normal' | 'full'. tight: no-go zone + only the motion actually near the dock (the original, most-zoomed-in behavior). normal: no-go zone + the whole printed object's silhouette, so you can see where the dock risk sits in context. full: normal, plus the canvas is sized to the printer's actual physical printable area (see printable_area below) -- no outline is drawn for it, it just affects how much empty space the canvas includes. Single global setting -- not configurable per status/target.",
+        "canvas_clip": "full",
+        "_travel_moves": "Whether to draw non-extruding travel moves at all. Off by default -- a real print can easily have thousands of these, and the main fix for object/support silhouettes 'bleeding' together was excluding travel from THOSE shapes entirely (see collect_motion_data in the .py), which needs no config to take effect. This is purely an optional debug overlay on top of that fix, not required to get clean silhouettes. Drawn as one layer-based silhouette polygon per travel track rather than one shape per travel move -- travel_segments (see the .py) still keeps each move's own start->end run distinct going INTO that grouping, it's just folded down to a handful of compact polygons afterward instead of staying thousands of separate rectangles. The Y-proximity tolerance used to decide what's the 'same' travel region is derived automatically per file from the actual spacing between this print's own objects (see compute_auto_cluster_gap_mm in the .py), not a config value -- a fixed tolerance would either fragment loosely-spaced prints or risk merging tightly-spaced ones, and the safe number is different for every print.",
+        "travel_moves": {
+            "show": false,
+            "fill": "rgba(200,200,200,0.20)",
+            "stroke": "rgba(200,200,200,0.55)",
+            "fill_style": "dithered"
+        },
+        "_printable_area": "Only used when canvas_clip is 'full', purely to size the canvas to the printer's real bed -- no outline is drawn for it. Everything below this point is inside the \"printable_area\" object.",
+        "printable_area": {
+            "_fallback_y_depth_and_z_height": "Used ONLY if the bed size can't be read from the g-code (OrcaSlicer appends 'printable_area'/'printable_height' as comments at the end of every exported file -- if that block is missing or in an unexpected format, these constants are used instead). Defaults here match a 350x344 bed with a 325mm max height.",
+            "fallback_y_depth": 344.0,
+            "fallback_z_height": 325.0
+        },
+        "_toolchange_collision_guard": "A SEPARATE, parallel check from the main dock-clearance check above -- catches something that check structurally cannot: the toolchange trigger point's raw (Y,Z) is already covered by the main check (it's just wherever the toolhead was before 'T{n}', part of the ordinary continuous motion trace), but the actual physical Z-hop during a real swap is synthesized by the printer's own macro at print time and never appears as a literal commanded coordinate anywhere in this file. This adds an assumed hop height to each toolchange/restore point's observed Z and checks THAT hypothetical peak against the no-go boundary. A failure here is a HARD FAIL -- same export-blocking behavior as the main check, not just a warning.",
+        "toolchange_collision_guard": {
+            "_enabled": "On by default -- this is a genuine safety check, not a visualization nicety.",
+            "enabled": true,
+            "_toolchange_hop_mm": "Assumed height (mm) the toolhead rises above its observed Z when a toolchange is TRIGGERED (the outbound, into-the-dock hop). Defaults to 0.0 -- an honest 'no assumption yet' placeholder, not a real measurement. Find your actual value from whatever macro performs the hop, then set this.",
+            "toolchange_hop_mm": 1.0,
+            "_restore_hop_mm": "Assumed height (mm) the toolhead rises above the RESTORE position's observed Z before descending back into print (the inbound, return-to-print hop). This one's often a known, fixed value in your Klipper macro -- 10.0 here is a real example value, not a generic default; set it to whatever your own macro actually uses.",
+            "restore_hop_mm": 10.0
+        },
+        "_toolchange_markers": "Marks every T{n} tool-change trigger point and its corresponding restore position on the visualization. NOT the actual Z-hop/return motion during the swap itself (see toolchange_collision_guard above for the check that DOES account for it) -- these markers alone only show the two known endpoints: where the toolhead was when the swap started, and where it resumes printing afterward.",
+        "toolchange_markers": {
+            "_show": "'off' | 'no_go_only' | 'all'. 'no_go_only' only marks points that are themselves under the no-go zone (same Y/Z test as the actual collision check) -- a toolchange point and its restore point are filtered independently, so one can show while the other doesn't. Off by default -- opt in once you've confirmed it's useful, a file with thousands of toolchanges means thousands of markers. NOTE: any point that fails toolchange_collision_guard above is ALWAYS shown and ALWAYS colored fail_color below, regardless of this setting -- a point causing a hard-fail export block isn't something this display setting can hide.",
+            "show": "off",
+            "_toolchange_and_restore": "{shape, color, size_px} for each point type. shape is one of 'cross' | 'circle' | 'square' | 'diamond' | 'triangle'. size_px is a FIXED on-screen pixel size (unlike clearance_zones' 'highlight'/'outline' modes below, which are real mm geometry that scales with canvas_clip zoom) -- with potentially thousands of markers, a consistent on-screen size is what keeps them legible regardless of zoom level. Restore position: if restore_pos_fix.py already annotated the T{n} line with 'X=.. Y=.. Z=..', that's used directly; otherwise it's calculated with the exact same lookahead restore_pos_fix.py itself uses, so an unannotated file gets an identical answer to what that processor would have written, not a second, possibly-divergent guess.",
+            "toolchange": {
+                "shape": "diamond",
+                "color": "rgba(255,140,0,0.85)",
+                "size_px": 2
+            },
+            "restore": {
+                "shape": "square",
+                "color": "rgba(0,220,120,0.85)",
+                "size_px": 2
+            },
+            "_fail_color": "Overrides toolchange/restore's own color above for any point that fails toolchange_collision_guard -- shared between both point types (not independently configurable per type) so a failure always reads as unmistakably 'wrong' regardless of which role it was.",
+            "fail_color": "rgba(255,0,0,0.95)"
+        },
+        "_z_cap": "Top of the no-go zone / canvas (mm). Defaults to observed max Z + 10 if omitted.",
+        "z_cap": 325.0,
+        "_box_pad": "Padding in mm around the drawn content before it's scaled to fit the canvas.",
+        "box_pad": 5.0,
+        "_max_size": "Max on-screen size (px) of the longer canvas dimension.",
+        "max_size": 450,
+        "_silhouette_simplify_mm": "Douglas-Peucker simplification tolerance (mm) applied to every silhouette polygon -- object, support, and travel alike -- before it's embedded. One point per printed layer is the norm otherwise (400+ layers is a normal print), and most of an object's height is straight walls where consecutive layers barely move in Y, so those points are pure redundancy at preview scale. 0.15mm is well under line-width scale and should be visually lossless; set to 0 to disable and keep the exact one-point-per-layer trace.",
+        "silhouette_simplify_mm": 0.15,
+        "_title": "Header text shown above the visualization, both on the printer console and the PC window.",
+        "title": "Dock Collision Guard",
+        "_silhouette_generation_note": "Not a setting, just context: silhouette generation is layer-based, not rasterized. For each object (see EXCLUDE_OBJECT_START/END, needs 'Label objects' enabled in OrcaSlicer) and its linked supports (see colors.support below), every Z value actually PRINTED -- extruding moves only, travel excluded (including z-hops) -- gets a min/max Y; the silhouette is the polygon connecting those extremes top to bottom. Travel is excluded specifically because including it caused separate objects' silhouettes to visually bleed into one shape whenever a travel move connected them at the same Z. No numpy/scipy dependency. Files without object labeling enabled fall back to one unlabeled silhouette covering the whole print.",
+        "_clearance_zones": "How the actual danger areas get highlighted -- separate from (and drawn on top of) the object silhouette above. This is a two-layer design: the data layer (classify_z_layers/build_clearance_zones in the .py) always runs the same way regardless of these settings -- it buckets by Z exactly like the pass/fail check does (find_closest_approach), classifies every Z within reach of the dock as collision/near_miss/safe, and groups consecutive same-class Z's into zones. NONE of that ever affects the pass/fail decision, which stays a single worst-point check, unaffected by anything in this block -- these settings only control how the already-decided result gets DRAWN. Everything below this point is inside the \"clearance_zones\" object.",
+        "clearance_zones": {
+            "_gap_merge_mm": "If two zones of the SAME type (collision-collision or near_miss-near_miss) are separated by a safe gap of this many mm of Z or less, they're merged into one zone instead of drawn as two -- avoids a hairline-thin safe sliver splitting what's really one continuous risky region into two overlapping/flickering-looking shapes. A collision zone can never absorb a near_miss zone this way, or vice versa -- merging only ever bridges a 'safe' gap between two zones of the identical type. 0 disables merging entirely (every dip is its own zone, however small the gap).",
+            "gap_merge_mm": 1.0,
+            "_collision_and_near_miss": "Independent config per zone type -- each is {mode, highlight, outline}. mode is 'off' | 'highlight' | 'outline'. 'highlight' draws the zone's own min-Y/max-Y envelope as a separate filled polygon on top (fill/stroke/fill_style, same fields as colors.no_go). 'outline' recolors the object's OWN silhouette edge over that Z-range instead -- reads as the object's own outline changing color there, not a shape added on top of it. Only the sub-config matching the current mode is used; the other is just sitting there ready if you switch modes later.",
+            "collision": {
+                "mode": "highlight",
+                "highlight": {
+                    "fill": "rgba(255,230,0,0.35)",
+                    "stroke": "rgba(255,230,0,0.95)",
+                    "fill_style": "dithered"
+                },
+                "outline": {
+                    "stroke": "rgba(255,230,0,0.95)",
+                    "width_px": 1.5
+                }
+            },
+            "near_miss": {
+                "mode": "off",
+                "highlight": {
+                    "fill": "rgba(255,140,0,0.30)",
+                    "stroke": "rgba(255,140,0,0.85)",
+                    "fill_style": "dithered"
+                },
+                "outline": {
+                    "stroke": "rgba(255,140,0,0.85)",
+                    "width_px": 1.5
+                }
+            }
+        },
+        "_colors": "Everything below this point is inside the \"colors\" object.",
+        "colors": {
+            "_no_go": "Fill/stroke/fill_style for the no-go zone shape. fill_style is 'solid' (flat, opaque) | 'dithered' (translucent, textured).",
+            "no_go": {
+                "fill": "rgba(255,60,60,0.30)",
+                "stroke": "rgba(255,60,60,0.9)",
+                "fill_style": "dithered"
+            },
+            "_silhouette": "Used ONLY when there's a single silhouette to draw (one object, or object labeling wasn't enabled) -- keeps that case's exact look regardless of the auto-palette below. Same fill/stroke/fill_style shape as no_go above.",
+            "silhouette": {
+                "color": "#50aaff",
+                "fill_style": "dithered"
+            },
+            "_silhouette_palette": "Used for 2+ objects -- each object gets an auto-assigned distinct hue (golden-ratio spaced), this only controls saturation/value/alpha, not the hues themselves. All 4 values are 0.0-1.0.",
+            "silhouette_palette": {
+                "saturation": 0.65,
+                "value": 0.95,
+                "fill_alpha": 0.3,
+                "stroke_alpha": 0.9
+            },
+            "_support": "Fill/stroke/fill_style for support material silhouettes -- ONE fixed color shared by every object's supports (unlike silhouette_palette above, which varies per object). Requires OrcaSlicer's 'Detailed G-code comments' setting on (that's what emits the ';TYPE:Support' markers this is detected from) IN ADDITION TO 'Label objects' for the support-to-object linkage. Defaults to green, matching OrcaSlicer's own preview convention for support material.",
+            "support": {
+                "fill": "rgba(80,200,80,0.6)",
+                "stroke": "rgba(80,200,80,0.9)",
+                "fill_style": "dithered"
+            }
+        }
+    }
+}

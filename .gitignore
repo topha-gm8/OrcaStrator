@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.vscode/
+.idea/
+*.log
+OrcaStrator/configs/gui_state.json
+OrcaStrator/post_processors/logs/
+OrcaStrator/configs/backups
