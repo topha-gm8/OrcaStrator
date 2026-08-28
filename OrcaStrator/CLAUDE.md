@@ -4,7 +4,7 @@ Post-processing pipeline that runs at OrcaSlicer export time (on the PC,
 not on the printer). `orcastrator.py` -- "OrcaStrator" -- is the pipeline
 runner; it discovers and runs every processor in `post_processors/`, then
 embeds their combined output into the g-code file for the printer-side
-Klipper macro (`STEALTHCHANGER_RENDER`) to read and render.
+Klipper macro (`ORCASTRATOR_RENDER`) to read and render.
 
 **The Klipper macro has zero knowledge of what any individual processor
 does.** It only understands two generic stdout conventions, documented
@@ -241,7 +241,7 @@ console message (title + canvas), via Klipper's `_SVG_TOOLS`.
   needs neither.
 - Optional `"targets": ["printer", "pc"]` controls where a given payload
   actually shows up. `"printer"` means OrcaStrator embeds it in the
-  g-code for `STEALTHCHANGER_RENDER` to pick up; `"pc"` means the
+  g-code for `ORCASTRATOR_RENDER` to pick up; `"pc"` means the
   OrcaStrator's own tkinter progress window renders it directly, right
   there at export time. Include either, both, or (by emitting the line
   at all) at least one -- there's no reason to print an `SVG_PAYLOAD`
@@ -888,7 +888,7 @@ this isn't just cosmetic input validation).
 
 ## What you should never need to touch
 
-- `orcastrator.py`'s core loop, `STEALTHCHANGER_RENDER` (the
+- `orcastrator.py`'s core loop, `ORCASTRATOR_RENDER` (the
   Klipper macro), or the `SVG_PAYLOAD`/`NOTICE` parsing logic on either
   side. If you find yourself wanting to, that's a signal the generic
   contract above is missing something -- fix the contract, not one
