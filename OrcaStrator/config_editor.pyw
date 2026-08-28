@@ -700,7 +700,7 @@ def discover_gui_specs(order=None) -> list:
             entry["preview_controls"] = getattr(mod, "PREVIEW_CONTROLS", [])
             entry["build_preview_payload"] = getattr(mod, "build_preview_payload", None)
         # Optional per-config override of the settings column's minimum
-        # width -- open_stealthchanger_editor()'s default (440px) is
+        # width -- open_rich_editor()'s default (440px) is
         # sized for a "rich" config with short numeric fields (dock_
         # collision_guard's own); one with genuinely wide content (a
         # multiline template editor, say) can ask for more room up front.
@@ -723,7 +723,7 @@ def discover_gui_specs(order=None) -> list:
 # Every entry here -- dock_collision_guard.json included -- now comes
 # from gui/*.py via discover_gui_specs() above; nothing is hand-appended
 # to CONFIG_REGISTRY anymore. dock_collision_guard.json still opens the
-# "rich" editor (its live SVG preview, see open_stealthchanger_editor()
+# "rich" editor (its live SVG preview, see open_rich_editor()
 # below) because gui/dock_collision_guard.py sets KIND="rich" -- but its
 # title/subtitle/path/
 # sections all come from that file now, same mechanism as every other
@@ -1301,7 +1301,7 @@ class SettingsApp:
                 f"{entry['title']}: expected to find\n{entry['path']}\nbut it's not there.")
             return
         if kind == "rich":
-            self.open_stealthchanger_editor(entry)
+            self.open_rich_editor(entry)
         elif kind == "simple":
             self.open_simple_editor(entry)
         elif kind == "raw":
@@ -1426,9 +1426,9 @@ class SettingsApp:
             self.save_btn.pack(side="left", padx=4)
         return bar
 
-    # -- editor: StealthChanger (rich, with live SVG preview) -------------
+    # -- editor: rich (with live SVG preview) -----------------------------
 
-    def open_stealthchanger_editor(self, entry: dict, override_cfg: dict = None, _skip_confirm: bool = False):
+    def open_rich_editor(self, entry: dict, override_cfg: dict = None, _skip_confirm: bool = False):
         if not _skip_confirm and not self._confirm_leave():
             return
         path = entry["path"]
@@ -1452,7 +1452,7 @@ class SettingsApp:
             self.dirty = False
         self.validation_errors = {}
         self._refresh_hook = self.refresh_preview if entry.get("has_preview") else (lambda: None)
-        self._reopen = lambda e=entry, override_cfg=None: self.open_stealthchanger_editor(
+        self._reopen = lambda e=entry, override_cfg=None: self.open_rich_editor(
             e, override_cfg=override_cfg, _skip_confirm=True)
         self._clear_container()
 
@@ -1493,7 +1493,7 @@ class SettingsApp:
         # naturally along with the rest of the settings instead of being
         # pinned underneath the canvas regardless of how tall either side
         # ends up being. self._preview_vars is initialized once, by
-        # open_stealthchanger_editor(), before this runs -- shared with
+        # open_rich_editor(), before this runs -- shared with
         # whatever _build_preview_panel() adds to it below.
         for spec in self._preview_entry.get("preview_controls", []):
             if spec.get("kind") == "log_list":
@@ -1760,7 +1760,7 @@ class SettingsApp:
             form_parent.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
         else:
             # A FIXED minsize column, same proven pattern as
-            # open_stealthchanger_editor's own settings column (see its
+            # open_rich_editor's own settings column (see its
             # matching body.columnconfigure call and settings_min_width)
             # -- deliberately NOT fit_width. fit_width sizes the canvas to
             # `inner`'s natural reqwidth, which fights with desc_label's
@@ -3154,7 +3154,7 @@ class SettingsApp:
                         # easy to tick by accident right next to them.
                         Tooltip(check, "Refuses the print outright (Klipper's action_raise_error) "
                                        "instead of just showing a console message -- the SAME "
-                                       "mechanism the StealthChanger dock collision check uses, just "
+                                       "mechanism the Dock Collision Check uses, just "
                                        "triggered by this template instead. Always shows on the "
                                        "console no matter what this processor's own Notices setting "
                                        "says. Almost always paired with an \"Only if:\" condition "

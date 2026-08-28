@@ -143,17 +143,17 @@ open its editor.
 | On the landing page | Configures |
 |---|---|
 | **OrcaStrator** | The pipeline runner itself — the progress window's size/position, what happens when a check fails, and its color theme. |
-| **Tool Preheat** | Shared timing values used by two of the tool-heating post-processors (see below). |
+| **Disable Unused Tool Temps** | The idle-cooldown threshold. |
+| **Dock Collision Guard** | The dock collision check — boundary, visualization, and safety margins. This one has a live preview built in. |
+| **G-code Template Notice** | A mini templating language for creating your own notices using data from the gcode. |
 | **Insert Missing Tool Preheat** | Debug logging only — its one real setting lives under Tool Preheat. |
 | **Restore Position Fix** | Debug logging only — this post-processor has no settings of its own. |
-| **Disable Unused Tool Temps** | The idle-cooldown threshold. |
-| **StealthChanger Collision Check** | The dock collision guard — boundary, visualization, and safety margins. This one has a live preview built in. |
+| **Tool Preheat** | Shared timing values used by two of the tool-heating post-processors (see below). |
 | **Tool Temperature Graph** | Per-tool temperature-vs-time curve rendering — colors, line/area style, layout, canvas size. Has a live preview built from the last real export. |
 | **Toolchange Heatmap** | Toolchange-clustering timeline rendering — colors, clustering sensitivity, canvas size. Has a live preview built from the last real export. |
-| **G-code Template Notice** | A mini templating language for creating your own notices using data from the gcode. |
 | **Debug Logs** | A read-only viewer for the diagnostic files each post-processor can optionally write after every run (see *Debug logs* below). |
 
-The landing page's order can be dragged and rearranged to suit you —
+The landing page's order can be rearranged to suit you —
 your custom order is remembered for next time. A newly added
 post-processor with its own settings screen just shows up in its
 default spot; nothing needs to be wired up by hand.
@@ -161,7 +161,7 @@ default spot; nothing needs to be wired up by hand.
 Every editor has:
 
 - **Save** — writes your changes.
-- **Save Backup / Load Backup** — saves a timestamped copy of the
+- **Save Backup / Load Backup** — saves a copy of the
   current settings, or restores one you saved earlier. Useful before
   making a big change, so you can always get back to a known-good
   configuration.
@@ -182,7 +182,9 @@ above it explaining what it does.
 
 Each of these runs automatically, in order, on every export. You can
 turn any of them off from the **OrcaStrator** settings screen
-(Processor Selection) without needing to remove any files. There is also a "--denylist=script.py,..." param you can add if you want to disable any processor(s) for a particular print profile
+(Processor Selection) without needing to remove any files.
+
+There is also a "--denylist=script.py,..." param you can add if you want to disable any processor(s) for a particular print profile
 
 <p align="center">
 	<img src="Media/denylist.png" alt="Denylist param" width='50%'>
@@ -216,8 +218,7 @@ a small configurable margin of the limit, but not over it, is flagged
 as a "near miss" instead of a hard failure — worth a look, but not
 blocking.
 
-Settings available (all editable from the **StealthChanger Collision
-Check** screen):
+Settings available (all editable from the **Dock Collision Guard** screen):
 
 - **Boundary** — the Y/Z clearance curve described above. See *Setting
   up the boundary* below.
@@ -420,7 +421,7 @@ targets one or more of:
   it doesn't show up anywhere printer-side, it's just there for anyone
   reading the raw file.
 - **Abort print** — refuses to print the file, using the exact same
-  mechanism the StealthChanger dock collision check uses (Klipper's
+  mechanism that dock collision guard uses (Klipper's
   `action_raise_error`, via the render macro). Always shows on the
   printer console no matter what this screen's Notices setting says —
   an abort is never something you'd want silently muted. See **Aborting
@@ -529,8 +530,7 @@ refusing to print rather than risk it —
 On a normal print where the condition is false, this template does
 nothing at all — no console message, nothing. Only on the one print
 where the bed type is wrong does it fire, refuse the print (Klipper's
-`action_raise_error`, the exact same mechanism the StealthChanger dock
-collision check uses), and show your message explaining why.
+`action_raise_error`, the exact same mechanism that dock collision guard uses), and show your message explaining why.
 
 A couple of things worth knowing before you reach for this:
 - **A template with no condition and the Abort print destination

@@ -60,7 +60,7 @@ KIND = "rich"
 HAS_PREVIEW = True
 PREVIEW_CONTROLS = []
 
-# Wider settings column -- open_stealthchanger_editor()'s default
+# Wider settings column -- open_rich_editor()'s default
 # (minsize=440, see config_editor.pyw) is sized for dock_collision_
 # guard's short numeric fields; a multiline template editor genuinely
 # needs more room, since nothing else in the column would otherwise

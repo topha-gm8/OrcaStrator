@@ -34,13 +34,13 @@ in this file for the actual technique.
 The result is embedded as a small comment block near the top of the
 g-code file:
 
-    ; STEALTHCHANGER_CHECK_START
+    ; ORCASTRATOR_LOG_START
     ; STATUS:OK
     ; SVG_PAYLOAD:{...compact json...}
-    ; STEALTHCHANGER_CHECK_END
+    ; ORCASTRATOR_LOG_END
 
-The companion Klipper macro (STEALTHCHANGER_RENDER, in
-stealthchanger_render.cfg) does a single bounded read of the first ~64KB
+The companion Klipper macro (ORCASTRATOR_RENDER, in
+OrcaStrator_render.cfg) does a single bounded read of the first ~64KB
 of the file at print start, pulls this block out with a couple of
 string.find() calls, and renders it via _SVG_TOOLS. No subprocess, no
 regex sweep of the whole file, no numpy/scipy on the printer's host —
@@ -50,7 +50,7 @@ On a detected collision:
   - STATUS is set to VIOLATION in the embedded block
   - a RESPOND + CANCEL_PRINT_BASE block is ALSO injected at the very top
     of the file, as defense-in-depth in case this file is ever printed
-    without going through STEALTHCHANGER_RENDER's gate
+    without going through ORCASTRATOR_RENDER's gate
   - this script exits with code 1, which OrcaSlicer treats as a
     post-processing failure and will surface as an error at export time —
     you should never even get as far as having a file to upload
@@ -197,7 +197,7 @@ def render_svg_html(payload: dict) -> str:
         f'</svg>'
     )
 
-    title = payload.get("title", "StealthChanger dock check")
+    title = payload.get("title", "Dock Collision Check")
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         f"<title>{title}</title>"
@@ -245,7 +245,7 @@ def show_svg_on_pc(payload: dict, svg_cfg: dict, friendly_name: str) -> None:
             path = pathlib.Path(out_path).expanduser()
             path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            path = pathlib.Path(tempfile.gettempdir()) / "stealthchanger_dock_check.html"
+            path = pathlib.Path(tempfile.gettempdir()) / "dock_collision_guard_preview.html"
         path.write_text(html, encoding="utf-8")
 
         if svg_cfg.get("pc_svg_open", True):
@@ -2159,7 +2159,7 @@ def build_svg_payload(cfg: dict, pts: list, safe_y: float, positions: list,
     shapes.extend(marker_shapes)
 
     return {
-        "title": svg_cfg.get("title", "StealthChanger dock check"),
+        "title": svg_cfg.get("title", "Dock Collision Check"),
         "canvas": {
             "x_max": round(x_max, 2),
             "y_max": round(y_max, 2),
@@ -2195,13 +2195,13 @@ def print_notice(level: str, title: str, message: str) -> None:
 
 _CANCEL_BLOCK = """\
 ; =========================================================
-; STEALTHCHANGER DOCK COLLISION CHECK -- UNSAFE PRINT
+; DOCK COLLISION CHECK -- UNSAFE PRINT
 ; Z={z:.2f}mm at Y={y:.2f}mm exceeds dock limit of {limit:.2f}mm{object_note}
 ; Detected at slicer export time. This file should never have reached
 ; the printer -- if you are seeing this fire on the printer, the
-; STEALTHCHANGER_RENDER pre-print gate was bypassed.
+; ORCASTRATOR_RENDER pre-print gate was bypassed.
 ; =========================================================
-RESPOND TYPE=error MSG="StealthChanger: dock collision risk! Z={z:.2f} at Y={y:.2f} exceeds limit {limit:.2f}mm{object_note}. Print cancelled."
+RESPOND TYPE=error MSG="Dock collision risk! Z={z:.2f} at Y={y:.2f} exceeds limit {limit:.2f}mm{object_note}. Print cancelled."
 CANCEL_PRINT_BASE
 ; =========================================================
 """
@@ -2492,7 +2492,7 @@ def check_file(gcode_path: str) -> None:
             print("SVG_PAYLOAD:" + json.dumps(svg_payload, separators=(",", ":")))
             if "pc" in targets:
                 show_svg_on_pc(svg_payload, svg_cfg, friendly_filename(p))
-        print_notice("abort", "StealthChanger dock collision", abort_msg)
+        print_notice("abort", "Dock collision", abort_msg)
         debug_data["messages"] = {"stderr": stderr_msg, "notice": abort_msg}
         debug_data["decision"]["priority_category"] = priority_category
         _write_debug_dump("dock_collision_guard", debug_cfg, debug_data, script_path)
