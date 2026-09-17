@@ -946,6 +946,15 @@ class SettingsApp:
         s.configure("Accent.TButton", background=ORCA_ACCENT, foreground=ORCA_ACCENT_FG, borderwidth=0)
         s.map("Accent.TButton", background=[("disabled", ORCA_BORDER), ("active", ORCA_ACCENT_HOVER)],
               foreground=[("disabled", ORCA_FG_DIM)])
+        # Browser-style tab strip for the "Processor Selection" profile
+        # tabs (see _build_processor_profiles_field) -- selected tab
+        # picks up the same accent color used for the primary button
+        # everywhere else, so it reads as "the active one" at a glance.
+        s.configure("TNotebook", background=ORCA_BG, borderwidth=0, tabmargins=(2, 4, 2, 0))
+        s.configure("TNotebook.Tab", background=ORCA_BORDER, foreground=ORCA_FG,
+                    padding=(10, 4), borderwidth=0)
+        s.map("TNotebook.Tab", background=[("selected", ORCA_ACCENT)],
+              foreground=[("selected", ORCA_ACCENT_FG)])
         # Flat, slim scrollbars in the spirit of OrcaSlicer's own UI.
         # A custom ttk layout that drops the up/down (or left/right)
         # arrow buttons for a fully flat look is tempting, but a custom
@@ -1603,7 +1612,14 @@ class SettingsApp:
             frame = self._labelframe(self.settings_inner, title, self._section_tooltip(fields, override))
             frame.pack(fill="x", padx=4, pady=6)
             self._section_frame_order.append(frame)
-            self._add_section_fields(frame, fields)
+            # "processor_profiles" is a section unto itself (a tabbed
+            # sub-editor, not a row of label+value fields), so it
+            # bypasses the generic per-field loop entirely rather than
+            # teaching _add_field a kind that doesn't fit that shape.
+            if len(fields) == 1 and fields[0].get("kind") == "processor_profiles":
+                self._build_processor_profiles_field(frame, fields[0])
+            else:
+                self._add_section_fields(frame, fields)
 
         debug_section = _debug_section_for(self.cfg)
         if debug_section and not any(s[0] == "Debug" for s in self._rich_sections):
@@ -1837,7 +1853,10 @@ class SettingsApp:
             frame = self._labelframe(inner, title, self._section_tooltip(fields, override))
             frame.pack(fill="x", padx=4, pady=6)
             self._section_frame_order.append(frame)
-            self._add_section_fields(frame, fields)
+            if len(fields) == 1 and fields[0].get("kind") == "processor_profiles":
+                self._build_processor_profiles_field(frame, fields[0])
+            else:
+                self._add_section_fields(frame, fields)
 
 
         debug_section = _debug_section_for(self.cfg)
@@ -3502,6 +3521,361 @@ class SettingsApp:
                 "pack_info": dict(frame.pack_info()),
                 "entries": entries,
             })
+
+    def _build_processor_profiles_field(self, parent, spec, select_name=None):
+        """
+        Renders the "Processor Selection" section as browser-style tabs,
+        one per processor-selection profile, instead of one fixed set of
+        three pickers. The first tab is always the "default" profile
+        (shown as "Default") -- used by orcastrator.py whenever it's run
+        with no --profile flag, or one that doesn't match any tab here
+        (see get_profile() in orcastrator.py) -- so it can't be renamed
+        or deleted. Every other tab is a user-named profile, added via
+        the "+" tab and selected at run time by adding
+        --profile=<name> to one OrcaSlicer print profile's
+        post-processing scripts line; each gets its own "Delete
+        profile" button (with a confirmation prompt, since an
+        OrcaSlicer profile still pointing --profile at a deleted name
+        just silently falls back to "Default" from then on rather than
+        erroring).
+
+        Bypasses the page's usual per-field grid entirely (see the
+        `processor_profiles` special-case in _build_settings_form) --
+        this whole section is one self-contained widget, rebuilt fresh
+        (destroy every child of `parent`, call this again) on every
+        add/delete rather than trying to patch a live Notebook, same
+        "rebuild from data" approach _build_settings_form itself uses
+        for the whole screen.
+        """
+        path = spec["path"]
+        self._align_exempt_frames.add(parent)
+
+        # Normalize whatever's actually on disk into a fresh, ordered
+        # dict with "default" always first and always present -- covers
+        # a brand new config (no processor_profiles key at all yet), a
+        # pre-profiles config still using the old flat denylist/
+        # explicit_order/explicit_order_last keys (self.cfg is a plain
+        # json.load() of the file, with none of orcastrator.py's own
+        # loader-side migration applied -- see load_orcastrator_config()
+        # there, which is what actually migrates the file itself the
+        # moment any run reads it), and a saved profiles dict with
+        # "default" missing or not listed first.
+        raw = get_in(self.cfg, path, None)
+        raw = raw if isinstance(raw, dict) else {}
+        legacy_default = {
+            "denylist": get_in(self.cfg, ("denylist",), []),
+            "explicit_order": get_in(self.cfg, ("explicit_order",), []),
+            "explicit_order_last": get_in(self.cfg, ("explicit_order_last",), []),
+        }
+        names = ["default"] + [n for n in raw if isinstance(n, str) and n != "default"]
+        profiles = {}
+        for name in names:
+            entry = raw.get(name)
+            if not isinstance(entry, dict):
+                entry = legacy_default if name == "default" else {}
+            profiles[name] = {
+                key: [n for n in entry.get(key, []) if isinstance(n, str)]
+                for key in ("denylist", "explicit_order", "explicit_order_last")
+            }
+
+        def _commit():
+            self._on_change(path, profiles)
+
+        def _rebuild(select=None):
+            # Only the Notebook gets torn down and rebuilt -- `parent`
+            # is the section's own ttk.Labelframe, and its heading
+            # label is ALSO a direct child of it (see _labelframe:
+            # ttk.Label(frame, ...) then frame.configure(labelwidget=
+            # lbl)), so a blanket "destroy every child of parent" was
+            # taking the "Processor Selection" title down with it.
+            for child in parent.winfo_children():
+                if isinstance(child, ttk.Notebook):
+                    child.destroy()
+            self._build_processor_profiles_field(parent, spec, select_name=select)
+
+        nb = ttk.Notebook(parent)
+        nb.pack(fill="both", expand=True, padx=4, pady=(4, 8))
+
+        tab_widgets = {}
+
+        def _delete_profile(name):
+            if not self._askyesno(
+                    "Delete profile?",
+                    f"Delete the \u201c{name}\u201d profile? Any OrcaSlicer print profile still passing "
+                    f"--profile={name} will fall back to \u201cDefault\u201d from then on."):
+                return
+            profiles.pop(name, None)
+            _commit()
+            _rebuild()
+
+        def _rename_profile(name):
+            new_name = self._ask_profile_name([n for n in profiles if n != name], current_name=name)
+            if not new_name or new_name == name:
+                return
+            # Rebuilds the dict key-by-key (rather than pop+reinsert)
+            # so the renamed profile keeps its original tab position
+            # instead of jumping to the end -- profiles is mutated in
+            # place (clear+update, not reassigned) since _commit()'s
+            # closure above captured this exact dict object.
+            renamed = {(new_name if key == name else key): val for key, val in profiles.items()}
+            profiles.clear()
+            profiles.update(renamed)
+            _commit()
+            _rebuild(select=new_name)
+
+        for name in names:
+            tab = ttk.Frame(nb)
+            nb.add(tab, text=("Default" if name == "default" else name))
+            tab_widgets[name] = tab
+            self._build_profile_picker_row(tab, name, profiles, _commit)
+            if name != "default":
+                btn_row = ttk.Frame(tab)
+                btn_row.pack(fill="x", padx=6, pady=(0, 8))
+                ttk.Button(btn_row, text="Rename profile",
+                           command=lambda n=name: _rename_profile(n)).pack(side="left")
+                ttk.Button(btn_row, text="Delete profile",
+                           command=lambda n=name: _delete_profile(n)).pack(side="left", padx=(6, 0))
+
+        plus_tab = ttk.Frame(nb)
+        nb.add(plus_tab, text=" + ")
+
+        previous = {"tab": nb.tabs()[0] if nb.tabs() else ""}
+
+        def _on_tab_changed(event=None):
+            if nb.select() == str(plus_tab):
+                # "+" is a button styled as a tab (the usual browser
+                # trick), never actual content -- land back on whichever
+                # real tab was showing before it was clicked, THEN ask
+                # for the new profile's name in its own modal dialog.
+                nb.select(previous["tab"])
+                new_name = self._ask_profile_name(list(profiles.keys()))
+                if new_name:
+                    profiles[new_name] = {"denylist": [], "explicit_order": [], "explicit_order_last": []}
+                    _commit()
+                    _rebuild(select=new_name)
+            else:
+                previous["tab"] = nb.select()
+
+        nb.bind("<<NotebookTabChanged>>", _on_tab_changed)
+
+        if select_name in tab_widgets:
+            nb.select(tab_widgets[select_name])
+
+    def _build_profile_picker_row(self, parent, profile_name, profiles, commit):
+        """
+        The "Discovered processors" / "Runs first" / "Runs last" /
+        "Denylist" dual-list picker for ONE profile tab -- a scoped-down
+        copy of the shared-group picker _add_field builds for kind in
+        ("processor_denylist", "processor_order", "gui_order"), except
+        each profile here needs its OWN claim pool: a script can be
+        "Runs first" in one profile and denylisted in another, so
+        unlike that page-wide shared grouping, nothing here is shared
+        across tabs. `profiles[profile_name]` is mutated in place as
+        the user adds/removes/reorders; `commit()` (see
+        _build_processor_profiles_field) writes the WHOLE profiles dict
+        back to self.cfg after every change, same as every other
+        list-valued field in this app commits its whole list.
+        """
+        entry = profiles[profile_name]
+        all_scripts = discover_processor_scripts()
+
+        row = ttk.Frame(parent)
+        row.pack(fill="x", padx=4, pady=(6, 8))
+
+        # Single shared list, spanning all three rows on the right --
+        # same layout the page-wide picker uses (see _add_field's
+        # processor_denylist/processor_order/gui_order branch): one
+        # tall "Discovered..." list on the left, "Runs first"/"Runs
+        # last"/"Denylist" stacked vertically beside it, rather than
+        # three side-by-side columns.
+        left_frame = ttk.Frame(row)
+        left_frame.grid(row=0, column=0, rowspan=3, sticky="ns", padx=(4, 6))
+        ttk.Label(left_frame, text="Discovered processors", style="PickerHeader.TLabel").pack(anchor="w")
+        shared_list = tk.Listbox(left_frame, height=5, width=30, exportselection=False,
+                                  bg=ORCA_PANEL_BG, fg=ORCA_FG, highlightthickness=1,
+                                  highlightbackground=ORCA_BORDER, selectbackground=ORCA_ACCENT,
+                                  selectforeground=ORCA_ACCENT_FG)
+        shared_list.pack(fill="y", expand=True, anchor="w")
+        Tooltip(shared_list, "Everything found in post_processors/ that isn't already claimed by "
+                             "\"Runs first\", \"Runs last\", or \"Denylist\" in this profile.")
+
+        pickers = []  # [(right_list, current_list), ...]
+
+        def _claimed():
+            claimed = set()
+            for _rl, current in pickers:
+                claimed.update(current)
+            return claimed
+
+        def _refresh_left():
+            shared_list.delete(0, "end")
+            items = sorted(s for s in all_scripts if s not in _claimed())
+            for n in items:
+                shared_list.insert("end", n)
+            shared_list.configure(height=max(5, len(items) + 1))
+
+        def _refresh_right(right_list, current):
+            right_list.delete(0, "end")
+            for n in current:
+                right_list.insert("end", n)
+            right_list.configure(height=max(5, len(current) + 1))
+
+        def _refresh_all():
+            _refresh_left()
+            for right_list, current in pickers:
+                _refresh_right(right_list, current)
+
+        def _make_row(grid_row, title, key, reorder, tooltip_text):
+            current = [n for n in entry.get(key, []) if n in all_scripts]
+            entry[key] = current  # drop any stale/unmatched name in place
+
+            holder = ttk.Frame(row)
+            holder.grid(row=grid_row, column=1, sticky="w", pady=3)
+            btn_frame = ttk.Frame(holder)
+            btn_frame.grid(row=0, column=0, sticky="ns", padx=(0, 6))
+            right_frame = ttk.Frame(holder)
+            right_frame.grid(row=0, column=1, sticky="n")
+            ttk.Label(right_frame, text=title, style="PickerHeader.TLabel").pack(anchor="w")
+            right_list = tk.Listbox(right_frame, height=max(5, len(current) + 1), width=28,
+                                     exportselection=False, bg=ORCA_PANEL_BG, fg=ORCA_FG,
+                                     highlightthickness=1, highlightbackground=ORCA_BORDER,
+                                     selectbackground=ORCA_ACCENT, selectforeground=ORCA_ACCENT_FG)
+            right_list.pack(fill="y", expand=True)
+            if tooltip_text:
+                Tooltip(right_list, tooltip_text)
+
+            def _add(event=None):
+                sel = shared_list.curselection()
+                if not sel:
+                    return
+                name = shared_list.get(sel[0])
+                if name not in current:
+                    current.append(name)
+                _refresh_all()
+                commit()
+
+            def _remove(event=None):
+                sel = right_list.curselection()
+                if not sel:
+                    return
+                del current[sel[0]]
+                _refresh_all()
+                commit()
+
+            def _move(delta):
+                sel = right_list.curselection()
+                if not sel:
+                    return
+                idx = sel[0]
+                new_idx = idx + delta
+                if not (0 <= new_idx < len(current)):
+                    return
+                current[idx], current[new_idx] = current[new_idx], current[idx]
+                _refresh_right(right_list, current)
+                right_list.selection_set(new_idx)
+                commit()
+
+            updown_frame = ttk.Frame(holder)
+            updown_frame.grid(row=0, column=2, sticky="ns", padx=(6, 0))
+            if reorder:
+                ttk.Label(updown_frame, text=" ", style="PickerHeader.TLabel").pack(anchor="w")
+                ttk.Button(updown_frame, text="\u2191 Up", width=8, command=lambda: _move(-1)).pack(pady=2)
+                ttk.Button(updown_frame, text="\u2193 Down", width=8, command=lambda: _move(1)).pack(pady=2)
+
+            ttk.Label(btn_frame, text=" ", style="PickerHeader.TLabel").pack(anchor="w")
+            ttk.Button(btn_frame, text="Add \u2192", width=9, command=_add).pack(pady=2)
+            ttk.Button(btn_frame, text="\u2190 Remove", width=9, command=_remove).pack(pady=2)
+            right_list.bind("<Double-Button-1>", _remove)
+
+            pickers.append((right_list, current))
+
+        _make_row(0, "Runs first", "explicit_order", True,
+                  "Processor scripts (by filename) that must run before anything else discovered in "
+                  "this profile, in this exact order. Anything not listed here still runs, just after "
+                  "everything that is, in alphabetical order.")
+        _make_row(1, "Runs last", "explicit_order_last", True,
+                  "The mirror image of \"Runs first\": processor scripts that must run AFTER "
+                  "everything else discovered in this profile, in this exact order. If a name ends up "
+                  "in both lists, \"Runs first\" wins.")
+        _make_row(2, "Denylist", "denylist", False,
+                  "Processor scripts that should never run in this profile, even if present in "
+                  "post_processors/. To skip a processor for just ONE OrcaSlicer print profile instead "
+                  "of a whole processor-selection profile, use that print profile's own "
+                  "\"--denylist=script.py\" post-processing argument instead.")
+
+        if not all_scripts:
+            ttk.Label(row, text="No processor scripts found in post_processors/.",
+                      style="Hint.TLabel").grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        _refresh_all()
+
+    def _ask_profile_name(self, existing_names, current_name=None):
+        """
+        Modal prompt for a processor-selection profile's name -- used
+        both for the "+" tab (a brand new profile, current_name=None)
+        and a tab's "Rename profile" button (current_name=that tab's
+        current name, pre-filled; the caller excludes it from
+        `existing_names` so it isn't rejected as a collision with
+        itself). Returns the entered name (non-empty, not a
+        case-insensitive match for "default" or any OTHER existing
+        profile) or None if cancelled.
+        """
+        win = tk.Toplevel(self.root)
+        win.title("Rename Profile" if current_name else "New Profile")
+        win.configure(bg=ORCA_BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        orcastrator.apply_dark_titlebar(win, caption_hex=ORCA_TITLEBAR, text_hex=ORCA_TITLEBAR_FG)
+
+        body = ttk.Frame(win, padding=(16, 16, 16, 12))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Profile name:").pack(anchor="w", pady=(0, 6))
+        ttk.Label(body, wraplength=320, justify="left", style="Hint.TLabel",
+                  text="Selected at run time by adding --profile=<name> to one OrcaSlicer print "
+                       "profile's post-processing scripts line.").pack(anchor="w", pady=(0, 8))
+
+        entry_var = tk.StringVar(value=current_name or "")
+        entry = tk.Entry(body, textvariable=entry_var, bg=ORCA_PANEL_BG, fg=ORCA_FG,
+                          insertbackground=ORCA_FG, relief="flat", highlightthickness=1,
+                          highlightbackground=ORCA_BORDER, highlightcolor=ORCA_ACCENT, width=30)
+        entry.pack(fill="x")
+        if current_name:
+            entry.select_range(0, "end")
+        error_lbl = ttk.Label(body, text="", foreground=ERROR_COLOR)
+        error_lbl.pack(anchor="w", pady=(4, 0))
+
+        result = {"name": None}
+        taken = {n.strip().lower() for n in existing_names} | {"default"}
+
+        def _confirm(event=None):
+            name = entry_var.get().strip()
+            if not name:
+                error_lbl.configure(text="Name can't be empty.")
+                return
+            if name.lower() in taken:
+                error_lbl.configure(text=f"\u201c{name}\u201d already exists.")
+                return
+            result["name"] = name
+            win.destroy()
+
+        def _cancel(event=None):
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        win.bind("<Escape>", _cancel)
+        entry.bind("<Return>", _confirm)
+
+        btns = ttk.Frame(win, padding=(16, 0, 16, 16))
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Cancel", command=_cancel).pack(side="right", padx=(4, 0))
+        ttk.Button(btns, text=("Rename" if current_name else "Add"),
+                   style="Accent.TButton", command=_confirm).pack(side="right")
+
+        self._center_over_root(win)
+        win.grab_set()
+        entry.focus_set()
+        win.wait_window()
+        return result["name"]
 
     def _remember_default(self, path, value):
         """

@@ -181,14 +181,69 @@ above it explaining what it does.
 ## The post-processors
 
 Each of these runs automatically, in order, on every export. You can
-turn any of them off from the **OrcaStrator** settings screen
-(Processor Selection) without needing to remove any files.
+turn any of them off from the **OrcaStrator** settings screen, under
+**Processor Selection**, without needing to remove any files.
 
-There is also a "--denylist=script.py,..." param you can add if you want to disable any processor(s) for a particular print profile
+### Processor-selection profiles
+
+Processor Selection is organized as named **profiles**, shown as a row
+of browser-style tabs, rather than one fixed on/off list. Each profile
+has its own:
+
+- **Denylist** — processors to skip entirely.
+- **Runs first** (`explicit_order`) — processors pinned to the front
+  of the run, in the order listed.
+- **Runs last** (`explicit_order_last`) — processors pinned to the
+  end of the run, e.g. a read-only reporting step that wants to see
+  the final g-code after everything else has run.
+
+The first tab is always **Default** — it can't be renamed or
+deleted, and it's what every export uses unless told otherwise. If
+you're happy with one shared setup for every printer profile, this is
+the only tab you ever need to touch, and nothing below changes how
+you use it.
+
+If you want different printer profiles to run a different set/order
+of processors — for example, skipping the dock collision check on a
+profile that doesn't use a tool dock, or reordering things for a
+calibration print — open the **“+”** tab to create a new, named
+profile. Each custom profile gets its own **Rename profile** /
+**Delete profile** buttons.
+
+To use a profile, add `--profile=<name>` to the **same**
+Post-processing Scripts line from step 2 above, on whichever
+OrcaSlicer printer profile should use it, for example:
+
+```
+"C:\Path\To\Python\pythonw.exe" "C:\Path\To\OrcaStrator\orcastrator.py" --profile=PLA;
+```
+
+Printer profiles that don't add `--profile=` at all just keep using
+**Default**, so this is entirely opt-in. A `--profile` name that
+doesn't match any saved profile (a typo, or a profile that's since
+been deleted) also falls back to **Default**, with a note in the
+progress window's console rather than a failed export.
+
+There's also a separate `--denylist=script.py,...` param for the
+Post-processing Scripts line, for a one-off "skip this processor for
+just this print" without editing any saved profile:
+
+```
+"C:\Path\To\Python\pythonw.exe" "C:\Path\To\OrcaStrator\orcastrator.py" --profile=PLA --denylist=dock_collision_guard.py;
+```
+
+`--denylist` stacks on top of whichever profile is selected (or
+**Default**, if none is) — it adds to that profile's own denylist for
+this run only, rather than replacing it.
 
 <p align="center">
 	<img src="Media/denylist.png" alt="Denylist param" width='50%'>
 </p>
+
+> **Upgrading from an older OrcaStrator?** Your existing denylist /
+> runs-first / runs-last settings are automatically carried over into
+> the new **Default** tab the first time you open the settings GUI or
+> run an export — nothing to redo by hand.
 
 
 ### Dock Collision Guard

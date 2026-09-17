@@ -194,13 +194,32 @@ def _load_module(name, path):
     return module
 
 
+DEFAULT_PROFILE_NAME = "default"
+
+# What an unconfigured processor-selection profile looks like -- used
+# both as the "default" profile's own factory default (below) and as
+# the base a brand new profile starts from (see the settings GUI's "+"
+# tab in config_editor.pyw, which always adds one of these, never a
+# copy of "default").
+EMPTY_PROCESSOR_PROFILE = {"denylist": [], "explicit_order": [], "explicit_order_last": []}
+
 DEFAULT_ORCASTRATOR_CFG = {
     "show_progress_ui": True,
     "window": {"position": "bottom-right", "margin": 40, "remember_position": False},
     "on_error": {"stop_on_error": False, "auto_abort_on_unexplained_failure": True},
-    "denylist": [],
-    "explicit_order": ["restore_pos_fix.py", "disable_unused_tool_temps.py"],
-    "explicit_order_last": [],
+    # Named processor-selection profiles -- see get_profile() below.
+    # "default" is the one every run falls back to when no --profile
+    # flag is given (or one is given but doesn't match anything saved
+    # here), so it's the only profile guaranteed to always exist; every
+    # other entry is created/removed from the settings GUI's "Processor
+    # Selection" tabs (OrcaStrator -> Processor Selection).
+    "processor_profiles": {
+        DEFAULT_PROFILE_NAME: {
+            "denylist": [],
+            "explicit_order": ["restore_pos_fix.py", "disable_unused_tool_temps.py"],
+            "explicit_order_last": [],
+        },
+    },
     "auto_close": {"enabled": False, "seconds": 5},
     "debug": {"dir": ""},
     "sounds": {
@@ -215,6 +234,26 @@ DEFAULT_ORCASTRATOR_CFG = {
 }
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _WINDOW_POSITIONS = {"top-left", "top-right", "bottom-left", "bottom-right", "center"}
+
+
+def _validate_profile_entry(raw_entry, base: dict) -> dict:
+    """
+    Validates one processor-selection profile's three lists against
+    `base` (its own per-field fallback) -- same tolerance every other
+    value in load_orcastrator_config() already gets: a non-list, or a
+    list with some non-string entries mixed in, keeps whatever of it
+    is usable rather than discarding the whole profile. Entries that
+    ARE strings but don't match an actual post_processors/*.py filename
+    are deliberately NOT filtered out here -- that check happens later,
+    every run, in discover_processors(), same as always.
+    """
+    entry = dict(base)
+    if isinstance(raw_entry, dict):
+        for key in ("denylist", "explicit_order", "explicit_order_last"):
+            val = raw_entry.get(key)
+            if isinstance(val, list):
+                entry[key] = [n for n in val if isinstance(n, str)]
+    return entry
 
 
 def load_orcastrator_config() -> dict:
@@ -256,26 +295,30 @@ def load_orcastrator_config() -> dict:
         if isinstance(oe.get(key), bool):
             cfg["on_error"][key] = oe[key]
 
-    # Same tolerance as everything else here: a non-list, or a list with
-    # some non-string entries mixed in, doesn't discard the whole
-    # setting -- just keeps whatever of it is usable (or falls back to
-    # the default if none of it is). Entries that ARE strings but don't
-    # match an actual post_processors/*.py filename are deliberately
-    # NOT filtered out here -- that check happens later, every run, in
-    # discover_processors(), which already logs and ignores anything
-    # unmatched. Filtering here too would just be the same check done
-    # twice for no benefit.
-    dl = raw.get("denylist")
-    if isinstance(dl, list):
-        cfg["denylist"] = [n for n in dl if isinstance(n, str)]
-
-    eo = raw.get("explicit_order")
-    if isinstance(eo, list):
-        cfg["explicit_order"] = [n for n in eo if isinstance(n, str)]
-
-    eol = raw.get("explicit_order_last")
-    if isinstance(eol, list):
-        cfg["explicit_order_last"] = [n for n in eol if isinstance(n, str)]
+    pp = raw.get("processor_profiles")
+    if isinstance(pp, dict) and pp:
+        profiles = {}
+        for name, entry in pp.items():
+            if isinstance(name, str) and name.strip():
+                profiles[name] = _validate_profile_entry(entry, EMPTY_PROCESSOR_PROFILE)
+        if DEFAULT_PROFILE_NAME not in profiles:
+            # Every install needs a profile --profile can always fall
+            # back to (see get_profile()) -- a saved file that somehow
+            # lost or renamed its "default" entry gets an empty one
+            # synthesized rather than orcastrator.py refusing to run.
+            profiles[DEFAULT_PROFILE_NAME] = dict(EMPTY_PROCESSOR_PROFILE)
+        cfg["processor_profiles"] = profiles
+    else:
+        # Pre-profiles config (this app's old flat denylist/
+        # explicit_order/explicit_order_last keys, or a freshly missing
+        # file) -- migrate whatever's there into a single "default"
+        # profile, so upgrading never silently drops an existing
+        # pipeline setup. cfg["processor_profiles"]["default"] is
+        # already the factory default at this point (see
+        # DEFAULT_ORCASTRATOR_CFG), so any key `raw` doesn't have just
+        # keeps that.
+        cfg["processor_profiles"][DEFAULT_PROFILE_NAME] = _validate_profile_entry(
+            raw, cfg["processor_profiles"][DEFAULT_PROFILE_NAME])
 
     ac = raw.get("auto_close") if isinstance(raw.get("auto_close"), dict) else {}
     if isinstance(ac.get("enabled"), bool):
@@ -367,6 +410,9 @@ ORCA_TITLEBAR_FG = _CFG["theme"]["titlebar_fg"]  # OS titlebar text/icons
 class _NullProgressUI:
     """No-op fallback -- used whenever the real UI can't be created."""
     def update(self, name, status, ms, notices=None):
+        pass
+
+    def log(self, message, tag=None):
         pass
 
     def show_svgs(self, svg_entries):
@@ -592,7 +638,7 @@ class _TkProgressUI:
             x, y = WINDOW_MARGIN, WINDOW_MARGIN  # unrecognized value, fall back to a safe corner
         return int(x), int(y)
 
-    def __init__(self, processor_names):
+    def __init__(self, processor_names, profile_name=DEFAULT_PROFILE_NAME):
         import tkinter as tk
         from tkinter import ttk
         self._tk = tk
@@ -629,7 +675,13 @@ class _TkProgressUI:
         style.map("Orca.Vertical.TScrollbar", background=[("active", ORCA_ACCENT)])
         self._style = style
 
-        header = tk.Label(self.root, text="Running post-processors...", font=("Segoe UI", 11, "bold"),
+        # Only called out when it's not "Default" -- OrcaSlicer profiles
+        # that never pass --profile at all (the common case) see the
+        # same plain header this always had, rather than every window
+        # now redundantly saying "...with Default profile...".
+        header_text = ("Running post-processors..." if profile_name == DEFAULT_PROFILE_NAME
+                       else f"Running post-processors with {profile_name} profile...")
+        header = tk.Label(self.root, text=header_text, font=("Segoe UI", 11, "bold"),
                            bg=ORCA_BG, fg=ORCA_FG)
         header.pack(anchor="w", padx=12, pady=(10, 4))
 
@@ -789,6 +841,17 @@ class _TkProgressUI:
         self.text.see("end")
         self.text.configure(state="disabled")
         self.root.update()
+
+    def log(self, message, tag=None):
+        """
+        Appends a standalone line to the console that isn't tied to any
+        one processor's own result -- e.g. a discover_processors() note
+        about a --profile that didn't match, or a script listed in both
+        explicit_order and explicit_order_last. Public wrapper around
+        _append() so callers outside this class (run_all()) don't reach
+        into the "private" one directly.
+        """
+        self._append(message, tag)
 
     def update(self, name, status, ms, notices=None):
         ok = status == "OK"
@@ -1400,11 +1463,11 @@ class _TkProgressUI:
         self.root.unbind("<Button-1>")
 
 
-def _make_progress_ui(processor_names):
+def _make_progress_ui(processor_names, profile_name=DEFAULT_PROFILE_NAME):
     if not SHOW_PROGRESS_UI:
         return _NullProgressUI()
     try:
-        return _TkProgressUI(processor_names)
+        return _TkProgressUI(processor_names, profile_name)
     except Exception:
         return _NullProgressUI()
 
@@ -1414,31 +1477,78 @@ def _make_progress_ui(processor_names):
 
 POST_PROCESSORS_DIR = SELF_DIR / "post_processors"
 
+
+def profile_names() -> list:
+    """
+    Every processor-selection profile currently saved in
+    configs/orcastrator.json, in on-disk order ("default" always
+    first -- see load_orcastrator_config()). Used by the settings GUI
+    to build its "Processor Selection" tabs.
+    """
+    return list(_CFG["processor_profiles"].keys())
+
+
+def get_profile(name: str = None) -> tuple:
+    """
+    Resolves a --profile name (see the __main__ CLI parsing below)
+    against configs/orcastrator.json's processor_profiles, returning
+    (resolved_name, profile_dict, note). An empty/None name -- the
+    normal case, since most OrcaSlicer print profiles won't pass
+    --profile at all -- or one that doesn't match any saved profile,
+    falls back to "default", same forgiving-not-fatal tolerance as an
+    unmatched --denylist/explicit_order entry elsewhere in this file.
+    `note` is a human-readable string for the latter case (a
+    named-but-missing profile) or None otherwise -- deliberately not
+    printed here, since discover_processors()/run_all() are what
+    decide where a note like this needs to actually be seen: stderr
+    for a terminal run, but also the progress window's own console for
+    the (usual) case of OrcaSlicer launching this with no console
+    attached at all.
+    """
+    profiles = _CFG["processor_profiles"]
+    if name:
+        if name in profiles:
+            return name, profiles[name], None
+        note = f"--profile '{name}' not found, using '{DEFAULT_PROFILE_NAME}'"
+        return DEFAULT_PROFILE_NAME, profiles.get(DEFAULT_PROFILE_NAME, dict(EMPTY_PROCESSOR_PROFILE)), note
+    return DEFAULT_PROFILE_NAME, profiles.get(DEFAULT_PROFILE_NAME, dict(EMPTY_PROCESSOR_PROFILE)), None
+
+
+# The "default" profile's own three lists, kept as module-level
+# constants for anything that wants processor selection without caring
+# about --profile at all -- discover_processors()/run_all() below
+# don't actually read these directly (they resolve whichever profile
+# was requested via get_profile() at call time instead), but every
+# other script/tool that imports orcastrator.py still finds the same
+# EXPLICIT_ORDER/EXPLICIT_ORDER_LAST/DENYLIST names it always has.
+_DEFAULT_PROFILE = _CFG["processor_profiles"].get(DEFAULT_PROFILE_NAME, dict(EMPTY_PROCESSOR_PROFILE))
+
 # Scripts that must run before anything else discovered, in this exact
 # order. See "Execution order" above for why. Set in orcastrator.json
-# (explicit_order) -- editable from the settings GUI (OrcaStrator ->
-# Processor Selection) as a pick-and-reorder list built from whatever's
-# actually in post_processors/, rather than free-text entry.
-EXPLICIT_ORDER = list(_CFG["explicit_order"])
+# (processor_profiles.default.explicit_order) -- editable from the
+# settings GUI (OrcaStrator -> Processor Selection -> Default tab) as a
+# pick-and-reorder list built from whatever's actually in
+# post_processors/, rather than free-text entry.
+EXPLICIT_ORDER = list(_DEFAULT_PROFILE["explicit_order"])
 
 # The mirror image: scripts that must run after everything else
 # discovered, in this exact order -- for a processor that needs to see
 # the final state of the g-code once every other processor (including
-# ones added later and never listed anywhere) has already run. Set in
-# orcastrator.json (explicit_order_last) -- same GUI picker as
-# EXPLICIT_ORDER, just the "runs last" side of it. If a name ends up in
-# both lists, EXPLICIT_ORDER wins (see discover_processors()) -- being
-# pinned first always beats being pinned last.
-EXPLICIT_ORDER_LAST = list(_CFG["explicit_order_last"])
+# ones added later and never listed anywhere) has already run. Same
+# GUI picker as EXPLICIT_ORDER, just the "runs last" side of it. If a
+# name ends up in both lists, EXPLICIT_ORDER wins (see
+# discover_processors()) -- being pinned first always beats being
+# pinned last.
+EXPLICIT_ORDER_LAST = list(_DEFAULT_PROFILE["explicit_order_last"])
 
 # Extra safety: never treat these as runnable processors even if someone
 # drops them in post_processors/ by mistake (e.g. a shared library that
-# has no __main__ guard). Set in orcastrator.json (denylist) -- also
-# editable from the settings GUI. See run_all()/discover_processors()
-# for the separate, run-scoped --denylist CLI flag, which is for
-# skipping a processor for one specific OrcaSlicer profile/gcode
-# without touching this shared, always-applies list.
-DENYLIST = set(_CFG["denylist"])
+# has no __main__ guard). Also editable from the settings GUI. See
+# run_all()/discover_processors() for the separate, run-scoped
+# --denylist CLI flag, which is for skipping a processor for one
+# specific OrcaSlicer profile/gcode without touching a saved profile's
+# own denylist, which applies every time that profile is selected.
+DENYLIST = set(_DEFAULT_PROFILE["denylist"])
 
 # If True: stop at the first failing processor instead of running the
 # rest. Either way, any failure makes OrcaStrator exit non-zero,
@@ -1460,45 +1570,73 @@ PYTHON = sys.executable or "python3"
 # Discovery
 # ---------------------------------------------------------------------------
 
-def discover_processors(extra_denylist: frozenset = frozenset()) -> list:
+def discover_processors(extra_denylist: frozenset = frozenset(), profile: str = None) -> tuple:
+    """
+    Returns (ordered_processor_names, notes, resolved_profile_name).
+    `notes` is a list of human-readable strings for anything worth a
+    heads-up (a --profile that didn't match any saved profile,
+    explicit_order/explicit_order_last conflicts, missing/unknown
+    script names) -- every one is also printed to stderr here as
+    always, for a terminal run, but run_all() below ALSO surfaces the
+    same list in the progress window's own console, since stderr is
+    invisible when OrcaSlicer launches this with no console attached
+    at all (the normal case).
+    """
+    profile_name, profile_cfg, profile_note = get_profile(profile)
+    notes = []
+    if profile_note:
+        notes.append(profile_note)
+        print(f"[orcastrator] note: {profile_note}", file=sys.stderr)
+
     if not POST_PROCESSORS_DIR.is_dir():
-        print(f"[orcastrator] post_processors dir not found: {POST_PROCESSORS_DIR}", file=sys.stderr)
-        return []
+        msg = f"post_processors dir not found: {POST_PROCESSORS_DIR}"
+        notes.append(msg)
+        print(f"[orcastrator] {msg}", file=sys.stderr)
+        return [], notes, profile_name
+
+    explicit_order = profile_cfg["explicit_order"]
+    explicit_order_last = profile_cfg["explicit_order_last"]
+    denylist = set(profile_cfg["denylist"])
 
     all_names = sorted(p.name for p in POST_PROCESSORS_DIR.glob("*.py") if p.is_file())
-    effective_denylist = DENYLIST | extra_denylist
+    effective_denylist = denylist | extra_denylist
     found = [n for n in all_names if n not in effective_denylist]
 
-    # A name in both lists is almost certainly a mistake -- EXPLICIT_ORDER
+    # A name in both lists is almost certainly a mistake -- explicit_order
     # (runs first) wins, and it's dropped from the "runs last" side
     # entirely so it doesn't appear twice.
-    conflicts = sorted(n for n in EXPLICIT_ORDER_LAST if n in EXPLICIT_ORDER)
-    order_last = [n for n in EXPLICIT_ORDER_LAST if n not in EXPLICIT_ORDER]
+    conflicts = sorted(n for n in explicit_order_last if n in explicit_order)
+    order_last = [n for n in explicit_order_last if n not in explicit_order]
 
-    ordered_first = [name for name in EXPLICIT_ORDER if name in found]
+    ordered_first = [name for name in explicit_order if name in found]
     ordered_last = [name for name in order_last if name in found]
-    remainder = [name for name in found if name not in EXPLICIT_ORDER and name not in order_last]
-    missing = [name for name in EXPLICIT_ORDER if name not in found] + \
+    remainder = [name for name in found if name not in explicit_order and name not in order_last]
+    missing = [name for name in explicit_order if name not in found] + \
               [name for name in order_last if name not in found]
-    # Only the CLI-supplied extras get this check -- denylist.py entries
-    # in orcastrator.json come from the GUI's picker now, which can't
+    # Only the CLI-supplied extras get this check -- denylist entries
+    # in a saved profile come from the GUI's picker now, which can't
     # produce an unmatched name in the first place. --denylist is still
     # hand-typed on an OrcaSlicer profile's post-processing command
     # line, so a typo there is worth surfacing the same way a bad
-    # EXPLICIT_ORDER entry already is above.
+    # explicit_order entry already is above.
     unknown_extra = sorted(n for n in extra_denylist if n not in all_names)
 
     if conflicts:
-        print(f"[orcastrator] note: listed in both explicit_order and explicit_order_last, "
-              f"explicit_order wins: {conflicts}", file=sys.stderr)
+        msg = (f"profile '{profile_name}': listed in both explicit_order and explicit_order_last, "
+               f"explicit_order wins: {conflicts}")
+        notes.append(msg)
+        print(f"[orcastrator] note: {msg}", file=sys.stderr)
     if missing:
-        print(f"[orcastrator] note: EXPLICIT_ORDER/EXPLICIT_ORDER_LAST list scripts not present: {missing}",
-              file=sys.stderr)
+        msg = (f"profile '{profile_name}': explicit_order/explicit_order_last list scripts not "
+               f"present: {missing}")
+        notes.append(msg)
+        print(f"[orcastrator] note: {msg}", file=sys.stderr)
     if unknown_extra:
-        print(f"[orcastrator] note: --denylist named scripts not present, ignored: {unknown_extra}",
-              file=sys.stderr)
+        msg = f"--denylist named scripts not present, ignored: {unknown_extra}"
+        notes.append(msg)
+        print(f"[orcastrator] note: {msg}", file=sys.stderr)
 
-    return ordered_first + remainder + ordered_last
+    return ordered_first + remainder + ordered_last, notes, profile_name
 
 
 # ---------------------------------------------------------------------------
@@ -1632,16 +1770,27 @@ def prepend_run_log(gcode_path: str, run_results: list, svg_entries: list, notic
     p.write_text("\n".join(lines) + "\n" + content, encoding="utf-8")
 
 
-def run_all(gcode_path: str, extra_denylist: frozenset = frozenset()) -> int:
-    processors = discover_processors(extra_denylist)
+def run_all(gcode_path: str, extra_denylist: frozenset = frozenset(), profile: str = None) -> int:
+    processors, notes, profile_name = discover_processors(extra_denylist, profile)
     if not processors:
         print("[orcastrator] no processors found, nothing to do")
         return 0
 
     print(f"[orcastrator] target: {gcode_path}")
+    print(f"[orcastrator] profile: {profile_name}")
     print(f"[orcastrator] order: {processors}")
 
-    ui = _make_progress_ui(processors)
+    ui = _make_progress_ui(processors, profile_name)
+    # Same notes already printed to stderr inside discover_processors()
+    # above, surfaced here too -- OrcaSlicer normally launches this
+    # with no console attached at all, so stderr alone would make a
+    # typo'd --profile (or an explicit_order/denylist problem) silently
+    # invisible in the one place someone's actually looking: this
+    # window. Logged before the per-processor loop starts, so they
+    # read as a heads-up at the top of the console rather than getting
+    # buried among the run's own OK/FAIL lines.
+    for note in notes:
+        ui.log(f"note: {note}", "notice_warning")
 
     overall_start = time.time()
     any_failed = False
@@ -1684,18 +1833,32 @@ def run_all(gcode_path: str, extra_denylist: frozenset = frozenset()) -> int:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(f"Usage: {pathlib.Path(__file__).name} [--denylist=script.py,...] <gcode_file>", file=sys.stderr)
+        print(f"Usage: {pathlib.Path(__file__).name} [--profile=name] [--denylist=script.py,...] "
+              f"<gcode_file>", file=sys.stderr)
         sys.exit(1)
     # OrcaSlicer appends the output file path as the final argument
     # regardless of whatever else is on the "post-processing scripts"
-    # line, so anything in between is ours to parse. Currently just
+    # line, so anything in between is ours to parse.
+    #
+    # --profile: picks one of the named processor-selection profiles
+    # saved in orcastrator.json (OrcaStrator -> Processor Selection ->
+    # tabs) for THIS run -- put --profile=<name> on one OrcaSlicer print
+    # profile's post-processing scripts line to run that print profile
+    # with its own explicit_order/explicit_order_last/denylist instead
+    # of "Default". Missing, empty, or not matching any saved profile
+    # all fall back to "Default" (see get_profile()).
+    #
     # --denylist: lets one specific OrcaSlicer profile (printer/filament/
     # process) skip a processor for just that profile's prints, without
-    # touching orcastrator.json's own denylist, which applies to every
-    # run everywhere regardless of which profile triggered it. Useful
-    # since each profile calls this same orcastrator.py individually
+    # touching the selected profile's own denylist, which applies to
+    # every run using that profile regardless of which OrcaSlicer
+    # profile triggered it. Useful since each profile calls this same
+    # orcastrator.py individually
     extra_denylist = set()
+    profile_arg = None
     for arg in sys.argv[1:-1]:
         if arg.startswith("--denylist="):
             extra_denylist |= {n.strip() for n in arg[len("--denylist="):].split(",") if n.strip()}
-    sys.exit(run_all(sys.argv[-1], frozenset(extra_denylist)))
+        elif arg.startswith("--profile="):
+            profile_arg = arg[len("--profile="):].strip() or None
+    sys.exit(run_all(sys.argv[-1], frozenset(extra_denylist), profile_arg))

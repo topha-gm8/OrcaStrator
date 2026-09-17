@@ -79,14 +79,17 @@ SECTIONS = [
              path=("on_error", "auto_abort_on_unexplained_failure")),
     ]),
     ("Processor Selection", [
-        dict(kind="processor_order", label="Runs first", path=("explicit_order",)),
-        dict(kind="processor_order", label="Runs last", path=("explicit_order_last",), order_position="last"),
-        dict(kind="processor_denylist", label="Denylist", path=("denylist",)),
-    ], "All three pickers build their lists from whatever's actually in post_processors/ right now, "
-       "rather than free-text entry -- there's no way to end up with a typo'd or stale script name in "
-       "any of them. \"Runs first\"/\"Runs last\" only need to list the processors that actually care "
-       "about being pinned -- anything left off either list still runs, in between, alphabetically. If "
-       "a processor somehow ends up in both, \"Runs first\" wins."),
+        dict(kind="processor_profiles", label="Profiles", path=("processor_profiles",)),
+    ], "One tab per processor-selection profile -- each has its own \"Runs first\"/\"Runs last\"/"
+       "\"Denylist\" pickers, all three building their lists from whatever's actually in "
+       "post_processors/ right now rather than free-text entry, so there's no way to end up with a "
+       "typo'd or stale script name in any of them. \"Runs first\"/\"Runs last\" only need to list the "
+       "processors that actually care about being pinned -- anything left off either list still runs, "
+       "in between, alphabetically. If a processor somehow ends up in both, \"Runs first\" wins. The "
+       "\"Default\" tab is used whenever orcastrator.py runs with no --profile flag, or one that "
+       "doesn't match any tab here -- add more from the \"+\" tab and select one for a specific "
+       "OrcaSlicer print profile by adding --profile=<name> to that profile's post-processing scripts "
+       "line."),
     ("Settings Landing Page", [
         dict(kind="gui_order", label="Card order", path=("gui_order",)),
     ], "Purely cosmetic -- reorders the cards on this settings app's own landing page (the screen "

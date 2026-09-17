@@ -171,9 +171,10 @@ runnable processor (shared libraries, config files) belongs in
 `post_processors/helpers/`, `configs/`, or one level up next to
 OrcaStrator -- any of these keeps it out of the scan with zero extra
 config, no `denylist` entry needed (that still exists as an override in
-`orcastrator.json` -- editable from OrcaStrator Settings' Processor
-Selection section -- if you ever DO need to exclude something sitting
-directly in `post_processors/`, but it's empty by default now).
+`orcastrator.json`'s active processor-selection profile -- editable
+from OrcaStrator Settings' Processor Selection section -- if you ever
+DO need to exclude something sitting directly in `post_processors/`,
+but it's empty by default now).
 
 Companion `.json` configs (like `dock_collision_guard.json`) are looked
 for in exactly one place: `configs/`, next to OrcaStrator.
@@ -373,8 +374,31 @@ a processor pinned in `EXPLICIT_ORDER_LAST` stays last regardless of what
 gets added later. If a name ends up in both lists, `EXPLICIT_ORDER` wins
 and `discover_processors()` prints a note -- that combination almost
 certainly isn't intentional. Both lists are editable from the settings
-GUI (OrcaStrator -> Processor Selection -> "Runs first"/"Runs last"),
-same pick-from-disk pickers, not free-text.
+GUI (OrcaStrator -> Processor Selection -> a profile's tab ->
+"Runs first"/"Runs last"), same pick-from-disk pickers, not free-text.
+
+**Processor-selection profiles.** `EXPLICIT_ORDER`/`EXPLICIT_ORDER_LAST`/
+`DENYLIST` all live under a named profile now --
+`orcastrator.json`'s `processor_profiles` dict, e.g.
+`{"default": {...}, "PLA": {...}}` -- instead of one fixed set of three
+lists. `"default"` is the profile every run falls back to, so it always
+exists (`load_orcastrator_config()` synthesizes an empty one if it's
+ever missing) and can't be renamed or deleted from the settings GUI.
+Every other profile is created from the "Processor Selection" section's
+"+" tab and picked at run time with `--profile=<name>` on one OrcaSlicer
+print profile's post-processing scripts line (`get_profile()` falls
+back to `"default"` -- with a stderr note -- for a missing/typo'd name,
+same tolerance as an unmatched `--denylist` entry). A pre-profiles
+`orcastrator.json` (flat `denylist`/`explicit_order`/
+`explicit_order_last` keys) migrates into a single `"default"` profile
+automatically the first time `load_orcastrator_config()` reads it; the
+settings GUI shows the same migrated values in the "Default" tab
+without needing that migration to have already run (see
+`_build_processor_profiles_field()`'s own legacy fallback in
+`config_editor.pyw`), but only actually rewrites the file in the new
+shape once something in that section is edited and saved -- until then,
+`orcastrator.py`'s own loader-side migration is what makes an
+untouched legacy file still work.
 
 **Sharing a config value across processors.** `tool_preheat.json`'s
 `target_lead_seconds` is intentionally read by both
