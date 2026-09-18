@@ -31,6 +31,9 @@ But rather then run post procesors individually in the background or through a j
 Every status is visible and we can display images to help identify changes or issues before a print begins.
 With the klipper companion macro setup, any gcode that wasn't run through Orcastrator will be refused from printing, so you have piece of mind knowing the gcode is configured for your printer setup.
 
+Join the discussion on the Stealthchanger Discord <br>
+[![DraftShift](https://img.shields.io/discord/1226846451028725821?logo=discord&label=DraftShift)](https://discord.com/channels/1226846451028725821/1542710836974588014)
+
 ---
 
 ## How it works (the operation cycle)
