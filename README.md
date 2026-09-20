@@ -65,21 +65,45 @@ same way — you just won't see anything about it on the printer itself.
 
 ---
 
-## Installation
+## Installation and Updating
 
 ### Requirements
 
 - Python 3, with `tkinter` available (this is included with most
   Python installs; on some Linux distributions you may need to install
   a `python3-tk` package separately).
+- [git](https://git-scm.com/downloads) — only needed for the recommended
+  clone-based install below. Not required if you'd rather just copy the
+  folder.
 - No other software needs to be installed — everything OrcaStrator
   and its post-processors need is built into Python itself.
 
-### 1. Unpack the folder
+### 1. Get the files
 
-Extract the OrcaStrator folder anywhere convenient on your PC (it
-doesn't need to be next to OrcaSlicer). Keep the folder structure
-intact — everything inside it is expected to stay together. Except for the Klipper folder which needs to be uploaded to your printer and included in printer.cfg You may choose to delete it from your pc or keep it as a backup
+**Recommended: clone with git**
+
+```
+git clone https://github.com/topha-gm8/OrcaStrator
+```
+
+Put it anywhere convenient on your PC (it doesn't need to be next to
+OrcaSlicer). Cloning is the recommended route because it's what unlocks
+one-command updates later — see **Updating** below. Keep the folder
+structure intact — everything inside it is expected to stay together.
+Except for the Klipper folder, which needs to be uploaded to your
+printer and included in `printer.cfg`; you may choose to delete it from
+your PC afterward or keep it as a backup.
+
+**Alternative: download/copy the folder**
+
+Downloading the ZIP from GitHub (or copying the folder some other way)
+still works fine for a quick evaluation, or if you'd rather not deal
+with git. Extract it anywhere convenient, keeping the folder structure
+intact, same as above. The only difference is you won't get the
+one-command updater described below — updating later means downloading
+a fresh copy and carrying your `configs/*.json` files over yourself.
+`update_orcastrator.py` detects this case and tells you what to do if
+you decide to switch to a git clone later.
 
 ### 2. Point OrcaSlicer at OrcaStrator
 
@@ -130,6 +154,51 @@ step entirely if you don't want that — everything else still works.
 > https://github.com/Contomo/klipper-toolchanger-hard/tree/main/examples/misc-macros#auto_purge
 > The version used within this project has 'extra skills' such as text and dashed lines
 > It has been included in the OrcaStrator folder and will be imported with the above include line
+
+### Updating
+
+If you installed with `git clone`, the Settings GUI
+(`config_editor.pyw`) is the intended way to keep OrcaStrator up to
+date. It checks for updates in the background and shows a small
+**Update available** button in the top-right corner of its landing
+page when one's waiting — click it and it pulls the latest changes and
+merges any new settings into your existing `configs/*.json` files for
+you. There's also a switch to turn that background check
+off if you'd rather not be notified. Both only appear if this is a git
+clone; a downloaded/copied folder shows neither, since there's nothing
+to check against.
+
+If you'd rather do it by hand (or just want to trigger it from a
+terminal), the same update is one command, run from the repo root (the
+top-level folder git clone created, next to this README):
+
+```
+python update_orcastrator.py
+```
+
+Either way — button or command — your own config values are never
+overwritten, new settings get added, and anything renamed/removed
+upstream is reported so you can take a look.
+
+If you installed by downloading a ZIP or copying the folder, there's
+no automated route for the *code* — download a fresh copy and carry
+your own files over by hand, same as the initial install. But you
+don't have to redo your settings from scratch every time: download
+just the updated `configs/_defaults/` folder from the repo, drop it in
+over your existing one, and run
+
+```
+python update_orcastrator.py
+```
+
+It'll notice it isn't a git repo, print instructions for switching to
+a proper clone if you ever want the fully automated route — and then
+still merge whatever's in `configs/_defaults/` into your live
+`configs/*.json` on its own (new settings added, your values
+untouched, anything renamed/removed upstream flagged), the same way
+the git-based update does. No flag needed for that part; it happens
+either way. (`--merge-only` does the same merge without any of the
+git checks or messaging, if you'd rather skip straight to it.)
 
 ---
 

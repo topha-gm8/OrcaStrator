@@ -1,0 +1,49 @@
+{
+    "_comment": [
+        "Config for toolchange_heatmap.py -- a read-only visualization, no",
+        "settings here can change the g-code itself, only how the timeline",
+        "renders."
+    ],
+    "_kernel_sigma_seconds": "How wide (in estimated real seconds) the clustering kernel looks around each point in time when computing local density. Smaller = only toolchanges within a few seconds of each other register as a cluster; larger = treats a broader neighborhood as one cluster, smoothing out isolated close pairs in favor of longer runs.",
+    "kernel_sigma_seconds": 15.0,
+    "_density_scale": "Auto/override for what density counts as fully hot (hot_color) on the scale. Leave null (Auto) to use the print's own busiest cluster as the reference point, so the scale always adapts to this specific file. Set a fixed number instead to keep the color scale consistent when comparing the heatmap across different prints.",
+    "density_scale": null,
+    "_min_toolchanges": "Skip rendering entirely if the file has fewer toolchanges than this -- nothing meaningful to show with 0 or 1.",
+    "min_toolchanges": 2,
+    "_cool_color": "Color a point takes at the edge of a cluster, or an isolated toolchange with nothing nearby.",
+    "cool_color": "#2b6cb0",
+    "_hot_color": "Color a point takes at the center (most other toolchanges packed close in time) of the print's busiest cluster.",
+    "hot_color": "#e53e3e",
+    "_base_color": "Flat fill for the whole timeline strip everywhere that ISN'T inside a cluster's block -- deliberately a separate color from cool_color, not just the coolest end of that same gradient, so 'nothing happened here' can't be mistaken for 'a real toolchange happened here with nothing else nearby', and won't disappear if cool_color happens to be dark. Pick something that contrasts with OrcaStrator's own panel background (#1e1e1e).",
+    "base_color": "#000000",
+    "_tool_change_time_seconds": "How many seconds a single toolchange's swap/purge/park routine costs, added to the timeline once per toolchange that's already happened -- the underlying time estimate treats a toolchange line itself as instantaneous, so without this every toolchange looks 'free' and the whole timeline runs short. Leave null (Auto) to read OrcaSlicer's own '; machine_tool_change_time = N' line from the file (falls back to 0 if that line isn't present, e.g. non-OrcaSlicer g-code). Set a fixed number to override it.",
+    "tool_change_time_seconds": null,
+    "_print_duration_seconds": "Sets the timeline's right edge -- the naive time model otherwise only ever reaches the LAST toolchange's own timestamp, so any stretch of the print that happens after the last toolchange (nothing left to swap, still printing) would be silently missing from the canvas rather than shown as base_color. Leave null (Auto) to read OrcaSlicer's own '; estimated printing time (normal mode) = XhYmZs' line from the file. Only ever extends the axis, never shrinks it below the last toolchange's own time. Set a fixed number to override it.",
+    "print_duration_seconds": null,
+    "_ignore_first_toolchange": "The very first toolchange in the file is the printer's initial tool selection at the start of the print, not a mid-print swap -- there's nothing before it to have been 'close together' with. On by default: it's dropped entirely (not shown, not counted, not factored into clustering or the per-toolchange time cost above). Turn off to include it like any other toolchange.",
+    "ignore_first_toolchange": true,
+    "_cluster_gap_seconds": "How many seconds can separate two consecutive toolchanges and still count them as part of the same cluster. Toolchanges within a cluster render as ONE gradient block spanning from the first to the last of them -- cool at the edges, hot at the real center of density (not necessarily the geometric middle, since a cluster can be lopsided) -- rather than one flat color per toolchange, since a solid gradient fill isn't something this canvas can draw directly (see the module docstring). A toolchange with nothing within this distance of it is its own cluster of one and just draws as a single line -- no span to gradient across. Leave null (Auto) to use 3x the kernel width above (past that distance the clustering kernel's contribution is negligible anyway, so it's a natural cutoff). Set a fixed number to override it -- smaller splits more things into separate blocks/lines, larger merges more into one continuous block.",
+    "cluster_gap_seconds": null,
+    "_line_width_px": "Width, in pixels, of an isolated toolchange's line (a cluster of one -- see cluster_gap_seconds). Has no effect on multi-toolchange blocks, which are sized by their own real time span instead.",
+    "line_width_px": 2,
+    "_block_strip_target_px": "Roughly how many screen pixels wide each individual gradient strip inside a block should be. Lower = smoother-looking gradient but more shapes to render (slower); higher = coarser/more banded but faster. Strip count is capped between 4 and 40 per block regardless.",
+    "block_strip_target_px": 2,
+    "_color_curve_gamma": "Reshapes the cool->hot transition without changing which point is actually the busiest (that one is always fully hot_color regardless). 1.0 = linear/unchanged. If most toolchanges in a file land at similarly high density, the whole timeline can read as 'mostly hot_color, a tiny sliver of cool_color' even though it's technically correct -- raising this (try 2-3) pushes low/mid readings further toward cool_color before they start warming up, spreading the transition out so more of the gradient is actually visible. Below 1.0 does the reverse, warming things up faster.",
+    "color_curve_gamma": 1.0,
+    "_svg_target": "Where the heatmap shows up: 'pc' = only in OrcaStrator's own progress window at export time. 'printer' = only embedded in the g-code for the printer's own console/screen to render (via the same _SVG_TOOLS Klipper macro every other processor's SVG output uses). 'both' = show it in both places. No 'off' option -- this whole processor exists to show this, so hiding it everywhere isn't a meaningful choice.",
+    "svg_target": "both",
+    "_canvas_width_px": "Width, in pixels, of the rendered strip. Independent of canvas_height_px below -- each is solved for directly, not derived from the other via a fixed aspect ratio.",
+    "canvas_width_px": 500.0,
+    "_canvas_height_px": "Height, in pixels, of the rendered strip. Independent of canvas_width_px above.",
+    "canvas_height_px": 100.0,
+    "_debug": "Writes a structured JSON snapshot of every toolchange this run found -- its line, tool, calibrated timestamp, and local density -- plus the resolved density scale reference, to a file. Exists so a 'why did this render the way it did' question can be answered from exact real data instead of a screenshot or a description of one. Written on every run, including a skipped one. See helpers/debug_dump.py, the feature shared across every processor that opts in. Saved as toolchange_heatmap_debug.json.",
+    "debug": {
+        "_enabled": "On by default. The file gets overwritten every run, so it always just reflects the latest gcode processed -- fine to leave on.",
+        "enabled": true
+    },
+    "_notice": "Whether this processor's own info/warning NOTICE messages show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code's ORCASTRATOR_LOG block either way -- this setting only tells the printer-side macro whether to actually print it, so nothing is lost from the file or from this processor's own debug dump if debug logging is on, just muted on the console. abort-level notices (a genuine refuse-to-print condition, if this processor ever emits one) are NEVER muted by this, regardless of the setting -- see helpers/notice.py. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out.",
+    "notice": {
+        "_display": "Whether this processor's own info/warning NOTICE messages show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code either way -- this only tells the printer-side macro whether to print it, so nothing is lost from the file or from a Debug dump if that's on, just muted on the console. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out. A genuine abort/refuse-to-print notice, if this processor ever emits one, is never muted by this setting.",
+        "display": true
+    }
+}

@@ -137,6 +137,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
 import pathlib
 
@@ -1564,6 +1565,14 @@ STOP_ON_ERROR = _CFG["on_error"]["stop_on_error"]
 AUTO_ABORT_ON_UNEXPLAINED_FAILURE = _CFG["on_error"]["auto_abort_on_unexplained_failure"]
 
 PYTHON = sys.executable or "python3"
+# On Windows, OrcaStrator itself may run with no console of its own (e.g.
+# under pythonw), in which case every processor subprocess would pop up a
+# brief command window. CREATE_NO_WINDOW suppresses that; it's a no-op
+# (empty kwargs) on every other platform.
+_NO_WINDOW_KWARGS = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if sys.platform.startswith("win") else {}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1665,6 +1674,7 @@ def run_processor(name: str, gcode_path: str):
         [PYTHON, str(script), gcode_path],
         capture_output=True,
         text=True,
+        **_NO_WINDOW_KWARGS,
     )
     elapsed_ms = int((time.time() - start) * 1000)
     svg_payloads = _extract_prefixed_lines(result.stdout or "", SVG_STDOUT_PREFIX)
@@ -1798,6 +1808,55 @@ def run_all(gcode_path: str, extra_denylist: frozenset = frozenset(), profile: s
     svg_entries = []
     notice_entries = []
 
+    # Update check -- kicked off HERE, before any processor runs, so its
+    # real `git fetch` (when one actually happens) overlaps with the
+    # processors' own work below instead of adding to this run's total
+    # time. Joined (with a short bound) and displayed only after every
+    # processor has finished -- see the join right after the loop.
+    #
+    # Nobody but config_editor.pyw's landing page has ever triggered an
+    # actual check before now, which meant this console notice only
+    # ever showed up for someone who happened to still have Settings
+    # open recently -- most people who've already got everything set up
+    # the way they want may never open it again. This is the fix: the
+    # pipeline checks for itself too, on its own much coarser cadence
+    # (DAILY_CHECK_INTERVAL_SECONDS -- a print can happen many times a
+    # day, and doesn't need its own fetch each time), sharing the exact
+    # same cache config_editor.pyw already uses -- whichever of the two
+    # happens to check first in a given window satisfies the other for
+    # free. The actual update/apply flow is still only ever done through
+    # the editor; this only ever checks and reports.
+    #
+    # Guarded the same defensive way as every other optional gui/*.py
+    # load in this file: this must never be able to break an export
+    # just because the update-check module is missing, this folder
+    # isn't a git repo, or gui_state.json is unreadable. Runs as a
+    # daemon thread specifically so a hung/never-returning fetch can
+    # never keep the whole process (and thus the print) from exiting --
+    # the join below bounds how long THIS run waits on it, not how long
+    # the fetch itself is allowed to run.
+    update_check = None
+    update_check_thread = None
+    try:
+        update_check = _load_module("_update_check", str(SELF_DIR / "gui" / "_update_check.py"))
+
+        def _update_check_worker():
+            try:
+                # Respects the "Updates" toggle (the switch in
+                # OrcaStrator Settings) exactly like config_editor.pyw's
+                # own automatic check does -- if it's off, this must
+                # never fetch, only should_notify()/get_cached_status()
+                # (read after the join below) still apply regardless.
+                if update_check.get_check_enabled() and update_check.is_git_repo():
+                    update_check.check_for_updates(min_interval_seconds=update_check.DAILY_CHECK_INTERVAL_SECONDS)
+            except Exception:
+                pass
+
+        update_check_thread = threading.Thread(target=_update_check_worker, daemon=True)
+        update_check_thread.start()
+    except Exception:
+        update_check = None
+
     for name in processors:
         ok, status, ms, svg_payloads, notices = run_processor(name, gcode_path)
         run_results.append((name, status, ms))
@@ -1813,6 +1872,36 @@ def run_all(gcode_path: str, extra_denylist: frozenset = frozenset(), profile: s
                 break
 
     total_ms = int((time.time() - overall_start) * 1000)
+
+    # Display, now that every processor has finished -- see the kickoff
+    # above for why the check itself started before the loop. Bounded
+    # join: processors above have typically already taken longer than
+    # this by the time we get here, so in the common case the check is
+    # already done and this returns instantly; the bound just makes
+    # sure a slow/unreachable remote can never meaningfully delay this
+    # run's own g-code output. should_notify()/get_cached_status() are
+    # cheap either way (no network), so they're read regardless of
+    # whether the thread actually finished in time -- worst case this
+    # run just shows whatever was already cached from a previous check.
+    if update_check is not None:
+        try:
+            if update_check_thread is not None:
+                update_check_thread.join(timeout=2.0)
+            if update_check.should_notify():
+                status = update_check.get_cached_status()
+                short_sha = (status.get("remote_sha") or "")[:7]
+                synthetic = json.dumps({
+                    "level": "info",
+                    "title": "Update available",
+                    "message": f"A newer OrcaStrator commit ({short_sha}) is available -- "
+                               f"open OrcaStrator Settings to review and apply it.",
+                    "display": update_check.get_notice_display_enabled(),
+                }, separators=(",", ":"))
+                notice_entries.append(("orcastrator", synthetic))
+                ui.log("note: an OrcaStrator update is available -- see OrcaStrator Settings", "notice_warning")
+        except Exception:
+            pass
+
     prepend_run_log(gcode_path, run_results, svg_entries, notice_entries, total_ms)
     has_svgs = ui.show_svgs(svg_entries)
 

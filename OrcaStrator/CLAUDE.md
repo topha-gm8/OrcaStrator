@@ -509,6 +509,29 @@ runnable standalone (see the processor contract above) -- importing it
 back from a processor would risk a circular import and drags tkinter
 into a process that has no business needing it.
 
+### Update activity log
+
+Separate from the shared debug-dump system above: `gui/_update_check.py`
+(the update checker -- see its own docstring) keeps its own plain-text
+activity log, always on, no setting. It ignores the central mode/cap, but
+it follows the central Debug Log Directory (`debug.dir`, falling back to
+`post_processors/` like the dumps do -- it mirrors that rule in
+`_log_dir()` rather than importing `debug_dump.py`) and is listed in the
+settings app's "Debug Logs" card as `update_check` (current + previous).
+
+Two files there: `update_check.log` (current) and
+`update_check.previous.log` (the one before). A new run starts whenever a
+check actually gets going (past the "checked recently" throttle): the
+current log is renamed over the previous one, and a fresh log begins with
+the environment, the saved state, every git command (exit code, output,
+timing) and the outcome. Everything else appends to the current log --
+throttled checks that did nothing, "Ignore this update", the Updates and
+console-notice toggles, and applying an update (with the full output of
+`update_orcastrator.py`). Lines are written as they happen, so a hung or
+crashed check still leaves a partial timeline. Each line carries the
+process id and script name, since the settings app and a pipeline run can
+both write to it.
+
 ## Filenames: don't trust the path argument
 
 OrcaSlicer invokes processors against a temp upload file with a

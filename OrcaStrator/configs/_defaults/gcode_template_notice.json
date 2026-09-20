@@ -1,0 +1,52 @@
+{
+    "_comment": [
+        "User-authored template strings, rendered against placeholders drawn ",
+        "from this file's CONFIG_BLOCK (any '; key = value' resolved setting ",
+        "OrcaSlicer writes -- not a fixed list) plus a small set of computed ",
+        "placeholders such as total_number_toolchanges. Basic arithmetic, ",
+        "comparisons, a ternary (cond ? a : b), a `let name = expr` assignment ",
+        "(computes once, reusable by every {...} block after it in the SAME ",
+        "template only -- see render_template()'s docstring), and helper ",
+        "functions like time_format(seconds) are supported inside {...} -- see ",
+        "post_processors/helpers/placeholders.py for the full expression ",
+        "grammar and the up-to-date placeholder/function list.",
+        "",
+        "Each template independently targets one or more destinations:",
+        "  'notice'        -- shown as a plain console message on the printer.",
+        "  'gcode_comment' -- inserted as a plain comment line near the top ",
+        "                     of the file, metadata only, nothing printer-side.",
+        "  'abort'         -- refuses the print (Klipper's action_raise_error, ",
+        "                     the SAME mechanism dock_collision_guard.py uses). ",
+        "                     Always shown on the console regardless of this ",
+        "                     processor's own 'notice': {\"display\": ...} setting.",
+        "",
+        "Each template also accepts an optional 'condition': a boolean {expr} ",
+        "(same grammar, no braces, e.g. \"curr_bed_type != 'High Temp Plate'\") ",
+        "gating the WHOLE template -- every destination above only fires when ",
+        "it evaluates true. Missing/blank = always fires (the old behavior). ",
+        "A condition that fails to evaluate is treated as false (never fires) ",
+        "and emits its own 'warning' notice instead -- see evaluate_condition() ",
+        "in helpers/placeholders.py. This is what makes 'abort' safe to use for ",
+        "a 'watch a placeholder, refuse to print if it's wrong' check: pair it ",
+        "with a condition and it stays silent on every normal print.",
+        "",
+        "Empty templates list = this processor does nothing at all."
+    ],
+    "_templates": "The list of configured templates. Each entry: name (used as the NOTICE title / gcode-comment prefix), text (the template string, {expr} placeholders), condition (optional, gates the whole template -- see _comment above), destinations (list of 'notice'/'gcode_comment'/'abort').",
+    "templates": [
+        {
+            "name": "toolchange_time_summary",
+            "text": "\n{let toolchange_time = machine_tool_change_time * total_number_toolchanges}<{\">-<\" * 20}>\n{let percentage_print_time = int((toolchange_time / estimated_print_time_seconds) * 100)}\nTime wasted on toolchanges: {time_format(toolchange_time)} across {total_number_toolchanges} {pluralize(total_number_toolchanges, \"toolchange\")}\nWhich is {percentage_print_time > 60 ? \"heavy\" : (percentage_print_time > 35 ? \"moderate\" : \"light\")} at {percentage_print_time}% of the print time\n\n{\"--\" * 31}",
+            "condition": "",
+            "destinations": [
+                "notice"
+            ]
+        },
+        {
+            "name": "example_wrong_bed_type_check",
+            "text": "EXAMPLE (safe to edit or delete) -- This message shows only if the condition is true\ncurrent bed type is '{curr_bed_type}'. This fires because the condition below matched against THIS printer's last export. Change '==' to '!=' to test\nAbort print (if selected) will prevent the print from running if the condition is true",
+            "condition": "curr_bed_type == \"High Temp Plate\"",
+            "destinations": []
+        }
+    ]
+}

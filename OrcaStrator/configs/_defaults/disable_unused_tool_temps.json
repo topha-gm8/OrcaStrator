@@ -1,0 +1,35 @@
+{
+    "_comment": [
+        "Config for disable_unused_tool_temps.py",
+        "",
+        "idle_shutoff_minutes: how many minutes a tool must sit unused before",
+        "  it's worth cooling it down mid-print (and scheduling a reheat ahead",
+        "  of its next use). Set a number to use a fixed threshold, independent",
+        "  of preheat lead-time tuning -- e.g. 10 means 'don't bother cooling",
+        "  anything idle for less than 10 minutes'.",
+        "",
+        "  Leave as null (the default) for AUTO mode: the threshold becomes",
+        "  tool_preheat.json's target_lead_seconds PLUS its",
+        "  target_cooldown_seconds -- so a tool only gets cycled off if the",
+        "  idle gap is long enough to actually finish cooling down AND still",
+        "  regain a full reheat lead time before it's needed again. This is",
+        "  optional -- if this file is missing or unreadable, it also falls",
+        "  back to AUTO mode.",
+        "",
+        "  Either way, the reheat's own lead time (how early to start warming",
+        "  a tool back up before its next use) always comes from",
+        "  tool_preheat.json's target_lead_seconds -- this file only controls",
+        "  the shutdown decision, not the reheat timing."
+    ],
+    "idle_shutoff_minutes": null,
+    "_debug": "Writes a structured JSON snapshot of every idle-gap decision this run made -- the resolved idle threshold and where it came from, every toolchange event, and which tools got a permanent shutoff, a cycled cooldown+reheat, a clamped (couldn't-fully-reach-target) reheat, or were skipped for lack of a resolvable temp -- to a file. Exists so a 'why didn't this cool/reheat what I expected' question can be answered from exact real data instead of a screenshot or a description of one. Written on every run, including a skipped/no-op one -- see helpers/debug_dump.py, the feature shared across every processor that opts in. Saved as disable_unused_tool_temps_debug.json.",
+    "debug": {
+        "_enabled": "On by default. The file gets overwritten every run, so it always just reflects the latest gcode processed -- fine to leave on.",
+        "enabled": true
+    },
+    "_notice": "Whether this processor's own info/warning NOTICE messages show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code's ORCASTRATOR_LOG block either way -- this setting only tells the printer-side macro whether to actually print it, so nothing is lost from the file or from this processor's own debug dump if debug logging is on, just muted on the console. abort-level notices (a genuine refuse-to-print condition, if this processor ever emits one) are NEVER muted by this, regardless of the setting -- see helpers/notice.py. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out.",
+    "notice": {
+        "_display": "Whether this processor's own info/warning NOTICE messages show up on the printer console (via ORCASTRATOR_RENDER). The notice is still always written into the g-code either way -- this only tells the printer-side macro whether to print it, so nothing is lost from the file or from a Debug dump if that's on, just muted on the console. Handy for decluttering the console around a gcode_template_notice.py template you actually want to stand out. A genuine abort/refuse-to-print notice, if this processor ever emits one, is never muted by this setting.",
+        "display": true
+    }
+}

@@ -39,7 +39,9 @@ import importlib.util
 import json
 import pathlib
 import re
+import subprocess
 import sys
+import threading
 import types
 import tkinter as tk
 import tkinter.font as tkfont
@@ -84,6 +86,16 @@ try:
     _window_anchor = _load_module("_window_anchor", str(HERE / "gui" / "_window_anchor.py"))
 except Exception:
     _window_anchor = None
+
+# Same defensive load, same reasoning -- the landing page's update
+# status slot (see SettingsApp._build_update_status) is an enhancement,
+# not something the app structurally depends on. _update_check is None
+# if it can't be loaded for any reason, and the slot simply stays empty
+# in that case, same as _window_anchor's own fallback above.
+try:
+    _update_check = _load_module("_update_check", str(HERE / "gui" / "_update_check.py"))
+except Exception:
+    _update_check = None
 
 ORCA_BG = orcastrator.ORCA_BG
 ORCA_PANEL_BG = orcastrator.ORCA_PANEL_BG
@@ -329,6 +341,90 @@ def _field_visible(cfg, spec, defaults=None):
         elif val != expected:
             return False
     return True
+
+
+class ToggleSwitch(tk.Canvas):
+    """
+    On/off pill-style toggle switch (sliding knob), used in place of a
+    checkbox where a setting reads better as a live switch -- currently
+    the landing page's "Updates" control (see SettingsApp._build_update_status).
+
+    Drawn on a Canvas rather than swapping on/off PNGs, so it needs no
+    extra asset files. On = theme accent track, off = grey track, white
+    knob either way, with "ON" / "OFF" shown beside the knob (only the
+    current state's word is drawn). Bound to a tk.BooleanVar like a Checkbutton would be:
+    clicking (or Space/Enter while focused) flips the variable and then
+    calls `command()` with no arguments, so a handler can read the new
+    state straight from the variable. Changing the variable from code
+    redraws the switch automatically.
+    """
+
+    WIDTH = 54
+    HEIGHT = 22
+    PAD = 2  # gap between the knob and the pill's edge
+    OFF_COLOR = "#6a6a6a"  # track color when off (plain grey, not a theme color)
+    KNOB_COLOR = "#ffffff"  # knob is white in both states
+
+    def __init__(self, parent, variable, command=None):
+        super().__init__(parent, width=self.WIDTH, height=self.HEIGHT,
+                         bg=ORCA_BG, highlightthickness=1,
+                         highlightbackground=ORCA_BG, highlightcolor=ORCA_ACCENT,
+                         bd=0, cursor="hand2", takefocus=True)
+        self._var = variable
+        self._command = command
+        self._hover = False
+        self._trace_id = self._var.trace_add("write", lambda *_: self._draw())
+        self.bind("<Button-1>", self._toggle)
+        self.bind("<space>", self._toggle)
+        self.bind("<Return>", self._toggle)
+        self.bind("<Enter>", lambda e: self._set_hover(True))
+        self.bind("<Leave>", lambda e: self._set_hover(False))
+        self.bind("<Destroy>", self._on_destroy)
+        self._draw()
+
+    def _on_destroy(self, event):
+        if event.widget is not self:
+            return
+        try:
+            self._var.trace_remove("write", self._trace_id)
+        except Exception:
+            pass
+
+    def _set_hover(self, hover):
+        self._hover = hover
+        self._draw()
+
+    def _toggle(self, _event=None):
+        self._var.set(not self._var.get())
+        if self._command is not None:
+            self._command()
+        return "break"
+
+    def _draw(self):
+        try:
+            on = bool(self._var.get())
+            self.delete("all")
+            w, h, pad = self.WIDTH, self.HEIGHT, self.PAD
+            # Track: theme accent (same as Accent.TButton) when on, grey when off.
+            track = (ORCA_ACCENT_HOVER if self._hover else ORCA_ACCENT) if on else self.OFF_COLOR
+            # Pill track: two end caps plus a bar between them.
+            self.create_oval(0, 0, h, h, fill=track, outline=track)
+            self.create_oval(w - h, 0, w, h, fill=track, outline=track)
+            self.create_rectangle(h // 2, 0, w - h // 2, h, fill=track, outline=track)
+            # Knob: right when on, left when off. White either way.
+            d = h - 2 * pad
+            x = w - pad - d if on else pad
+            self.create_oval(x, pad, x + d, pad + d, fill=self.KNOB_COLOR, outline=self.KNOB_COLOR)
+            # Only the current state's word is shown, in the free space
+            # beside the knob: "ON" left of it, "OFF" right of it.
+            if on:
+                self.create_text(x // 2 + 1, h // 2, text="ON", fill=ORCA_ACCENT_FG,
+                                 font=("Segoe UI", 7, "bold"))
+            else:
+                self.create_text((x + d + w) // 2 - 1, h // 2, text="OFF", fill="#ffffff",
+                                 font=("Segoe UI", 7, "bold"))
+        except tk.TclError:
+            pass  # widget destroyed mid-redraw
 
 
 class Tooltip:
@@ -855,6 +951,24 @@ class SettingsApp:
         self._align_exempt_frames = set()
         self._reopen = lambda: self.show_landing(_skip_confirm=True)  # what "Reload" re-invokes
 
+        # Update-check state for the landing page's title row (see
+        # _build_update_status / _start_update_check). Deliberately
+        # lives here in __init__, not in show_landing(): the automatic
+        # check is started exactly ONCE per running process below, and
+        # every later call to show_landing() just re-renders whatever
+        # self._update_state currently holds rather than re-triggering
+        # it -- starts "checking" and resolves to "not_git", "disabled",
+        # "up_to_date", or "available" (with a commit count).
+        self._update_state = {"status": "checking", "count": 0}
+        # Set fresh by whichever show_landing() call last built the
+        # title row's update slot; the background check (which only
+        # ever runs once) calls whatever this currently points to once
+        # it resolves, so it always updates the row actually on screen
+        # at that moment rather than a stale one from an earlier visit.
+        self._update_row_token = None
+        self._update_row_refresh = None
+        self._start_update_check()
+
         # Which Spinbox/Combobox (if any) currently owns the mousewheel --
         # set by _guard_wheel_until_clicked on focus/click, released by
         # an outside click, Enter, or Escape. See _on_wheel_fallback and
@@ -1337,7 +1451,16 @@ class SettingsApp:
         self._clear_container()
         self.root.title("OrcaStrator Settings")
 
-        ttk.Label(self.container, text="OrcaStrator Settings", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        title_row = ttk.Frame(self.container)
+        title_row.pack(fill="x")
+        ttk.Label(title_row, text="OrcaStrator Settings", font=("Segoe UI", 14, "bold")).pack(side="left")
+        # Right-justified in the SAME row as the title, rather than a
+        # separate bar -- this slot already existed as part of the
+        # title row's height on every screen before this feature
+        # existed, so filling it (with "Checking for updates...", the
+        # button, or nothing) never changes the window's own size.
+        self._build_update_status(title_row)
+
         ttk.Label(self.container, text="Pick a config to view or edit.", style="Hint.TLabel").pack(
             anchor="w", pady=(0, 12))
 
@@ -1354,6 +1477,40 @@ class SettingsApp:
             for lbl in self._landing_subtitles:
                 lbl.configure(wraplength=wrap)
         canvas.bind("<Configure>", _resize_subtitles, add="+")
+
+        # Keep the title row's right-hand controls (the Updates toggle and
+        # the "Update available" button) lined up with the Open buttons
+        # below, whatever the window width. The rows don't stretch with
+        # the window (inner keeps its natural width), so simply hugging
+        # the window's right edge would drift away from the buttons.
+        # maintainer note: 15px = row highlight border (1) + the Open
+        # button's padx (14) in _add_landing_row -- change them together.
+        # The extra 1px is ToggleSwitch's transparent focus-ring margin.
+        align = {"pad": None, "job": None}
+
+        def _align_now():
+            align["job"] = None
+            try:
+                row_right = min(inner.winfo_rootx() + inner.winfo_width(),
+                                canvas.winfo_rootx() + canvas.winfo_width())
+                button_right = row_right - 15
+                full_right = outer.winfo_rootx() + outer.winfo_width()
+                pad = max(0, full_right - button_right - 1)
+                if pad != align["pad"]:  # only touch layout on a real change
+                    align["pad"] = pad
+                    title_row.pack_configure(padx=(0, pad))
+            except tk.TclError:
+                pass
+
+        def _align_title_controls(_evt=None):
+            # Deferred + debounced: the rows' final on-screen position is
+            # only settled after the current round of layout finishes.
+            if align["job"] is None:
+                align["job"] = self.root.after_idle(_align_now)
+        inner.bind("<Configure>", _align_title_controls, add="+")
+        outer.bind("<Configure>", _align_title_controls, add="+")
+        canvas.bind("<Configure>", _align_title_controls, add="+")
+        _align_title_controls()
 
         entries = list(CONFIG_REGISTRY)
         claimed = {e["path"].resolve() for e in entries if e.get("path")}
@@ -1398,6 +1555,326 @@ class SettingsApp:
         btn_text = "View" if entry["kind"] == "none" else "Open"
         ttk.Button(row, text=btn_text, style="Accent.TButton",
                    command=lambda e=entry: self._open_entry(e)).pack(side="right", padx=14)
+
+    # -- Updates --------------------------------------------------------
+
+    def _start_update_check(self, force: bool = False):
+        """
+        Kicks off the update check. Called exactly ONCE automatically
+        per running process, from __init__ -- revisiting the landing
+        page later (Reload, back-and-forth navigation, etc.) just
+        re-renders whatever self._update_state already holds; it never
+        re-triggers this on its own. The one deliberate exception is
+        the toggle in _build_update_status: explicitly re-enabling it
+        mid-session calls this again with force=True as a one-time
+        manual recheck -- "once per execution" is about not silently
+        re-checking every time this screen happens to be shown, not
+        about refusing a check the person just asked for directly.
+
+        force=True also matters mechanically, not just semantically:
+        turning the toggle off clears the cached "update available"
+        state (see set_check_enabled's own docstring), and
+        check_for_updates() without force respects its own
+        once-per-few-hours throttle based on when it last actually
+        ran -- which, right after a disable/enable within the same
+        session, would just be moments ago. Without force=True here,
+        re-enabling would silently read back the just-cleared "nothing
+        pending" cache instead of genuinely re-checking, even though an
+        update may still be sitting there.
+
+        Runs entirely off the main thread, including the is_git_repo()
+        check itself (a subprocess spawn, not free, especially on
+        Windows) -- nothing here can add any delay to opening the app.
+
+        self._update_state["status"] ends up as one of:
+          "checking"   -- still in flight (the only state that renders
+                          without yet knowing if this is a git repo)
+          "not_git"    -- confirmed not a git clone; nothing is ever
+                          shown here, not even the toggle, since
+                          there's nothing this feature can do
+          "disabled"   -- IS a git repo, but the "Updates" toggle is off
+          "up_to_date" -- checked, nothing pending
+          "available"  -- an update is pending (see "count")
+        """
+        self._update_state["status"] = "checking"
+        if _update_check is None:
+            self._update_state["status"] = "not_git"
+            return
+
+        def _worker():
+            try:
+                if not _update_check.is_git_repo():
+                    self._update_state["status"] = "not_git"
+                    return
+            except Exception:
+                self._update_state["status"] = "not_git"
+                return
+
+            if not _update_check.get_check_enabled():
+                self._update_state["status"] = "disabled"
+            else:
+                try:
+                    fresh = _update_check.check_for_updates(force=force)
+                    pending = bool(fresh.get("update_available")) and \
+                        fresh.get("remote_sha") != fresh.get("ignored_sha")
+                except Exception:
+                    pending = False
+                if pending:
+                    try:
+                        count = len(_update_check.get_pending_commits())
+                    except Exception:
+                        count = 0
+                    self._update_state["status"] = "available"
+                    self._update_state["count"] = count
+                else:
+                    self._update_state["status"] = "up_to_date"
+
+            # Whichever landing-page title row is on screen right now
+            # (if any) picks this up via self._update_row_refresh --
+            # see _build_update_status. If the landing page isn't
+            # currently showing at all, this is simply a no-op; the
+            # NEXT time it's shown, _build_update_status renders
+            # straight from self._update_state, which by then already
+            # holds the resolved answer.
+            def _notify():
+                if self._update_row_refresh is not None:
+                    try:
+                        self._update_row_refresh()
+                    except Exception:
+                        pass
+            try:
+                self.root.after(0, _notify)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _build_update_status(self, parent):
+        """
+        Right-justified slot in the landing page's title row (same row
+        as "OrcaStrator Settings", not a separate bar below it) -- so
+        filling it never changes the window's own size, unlike a bottom
+        bar would. Renders directly from self._update_state, which
+        _start_update_check is the only thing that mutates automatically
+        (this method's own toggle handler is the one deliberate
+        exception -- see its comment below).
+
+        Nothing is shown at all until it's confirmed this IS a git
+        clone (self._update_state["status"] != "not_git") -- a ZIP
+        download or hand-copied folder gets no toggle, no text,
+        nothing, matching the original "only when this is a git clone"
+        requirement even though the check itself runs asynchronously.
+
+        Once confirmed a git repo, an "Updates" on/off toggle switch
+        (ToggleSwitch) is the one persistent control for the setting
+        (now that it's deliberately not part of the regular settings
+        form -- see gui/_update_check.py's own docstring on
+        get_check_enabled/set_check_enabled for why: putting a toggle
+        for this feature in the git-tracked orcastrator.json would mean
+        the very commit introducing the feature could modify that file
+        via a plain git pull for anyone not yet protected by
+        update_orcastrator.py). While "Checking for updates..." is
+        showing, or while an update is pending (the "Update available"
+        button), that text/button REPLACES the toggle in the same slot
+        instead of sitting beside it; the toggle returns once the
+        check finishes or the update is applied/ignored.
+        """
+        if _update_check is None:
+            return
+
+        token = object()
+        self._update_row_token = token
+        slot = ttk.Frame(parent)
+        slot.pack(side="right")
+
+        def _on_toggle():
+            enabled = toggle_var.get()
+            _update_check.set_check_enabled(enabled)
+            if enabled:
+                # A deliberate, explicit user action -- worth an
+                # immediate one-time recheck rather than waiting for
+                # the next app launch. force=True is required here, not
+                # just a nicety -- see _start_update_check's own
+                # docstring for why an unforced check right after a
+                # disable would just read back the just-cleared cache.
+                self._start_update_check(force=True)
+            else:
+                self._update_state["status"] = "disabled"
+            _render()
+
+        toggle_var = tk.BooleanVar(value=False)
+
+        def _render():
+            if self._update_row_token is not token:
+                return
+            try:
+                for child in slot.winfo_children():
+                    child.destroy()
+                status = self._update_state.get("status")
+
+                if status in ("checking", "not_git"):
+                    if status == "checking":
+                        slot.pack_configure(padx=(0, 1))
+                        ttk.Label(slot, text="Checking for updates...", style="Hint.TLabel").pack(side="right")
+                    return  # "not_git" -> nothing at all, not even the toggle
+
+                if status == "available":
+                    # The button REPLACES the toggle (same as "Checking for
+                    # updates..." does), rather than sitting beside it.
+                    # The toggle comes back once the update is applied or
+                    # ignored (both re-run _render).
+                    n = self._update_state.get("count", 0)
+                    plural = "" if n == 1 else "s"
+                    slot.pack_configure(padx=(0, 1))  # button has no transparent margin
+                    ttk.Button(slot, text=f"Update available ({n} commit{plural})",
+                               style="Accent.TButton", command=self._open_update_dialog).pack(side="right")
+                    return
+
+                # "disabled" / "up_to_date" -> just the toggle, which
+                # already communicates which of those two states this is.
+                # Layout: "Updates [toggle]" -- label first, then the switch.
+                slot.pack_configure(padx=0)
+                toggle_var.set(status != "disabled")
+                toggle_row = ttk.Frame(slot)
+                toggle_row.pack(side="right")
+                ttk.Label(toggle_row, text="Updates").pack(side="left", padx=(0, 6))
+                ToggleSwitch(toggle_row, variable=toggle_var,
+                             command=_on_toggle).pack(side="left")
+            except Exception:
+                pass
+
+        self._update_row_refresh = _render
+        _render()
+
+    def _open_update_dialog(self):
+        """
+        Modal commit-list dialog, offered once the landing-page title
+        row already knows an update is pending. Cancel/Ignore/Apply&Restart,
+        matching the app's existing modal patterns (_dialog(),
+        _pick_backup_dialog()) rather than stdlib messagebox.
+        """
+        try:
+            commits = _update_check.get_pending_commits()
+        except Exception:
+            commits = []
+        status = _update_check.get_cached_status()
+        remote_sha = status.get("remote_sha")
+
+        win = tk.Toplevel(self.root)
+        win.title("Update Available")
+        win.configure(bg=ORCA_BG)
+        win.transient(self.root)
+        win.grab_set()
+        orcastrator.apply_dark_titlebar(win, caption_hex=ORCA_TITLEBAR, text_hex=ORCA_TITLEBAR_FG)
+
+        n = len(commits)
+        header = f"{n} new commit{'' if n == 1 else 's'} available:" if n else \
+                 "An update is available, but its commit list couldn't be read."
+        ttk.Label(win, text=header, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(14, 6))
+
+        list_frame = tk.Frame(win, bg=ORCA_PANEL_BG, highlightthickness=1, highlightbackground=ORCA_BORDER)
+        list_frame.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+        list_outer, _canvas, list_inner = self._make_scroll_area(list_frame, bg=ORCA_PANEL_BG)
+        list_outer.pack(fill="both", expand=True, padx=1, pady=1)
+        for c in commits:
+            row = tk.Frame(list_inner, bg=ORCA_PANEL_BG)
+            row.pack(fill="x", padx=8, pady=4)
+            tk.Label(row, text=f"{c['short_sha']}  {c['summary']}", bg=ORCA_PANEL_BG, fg=ORCA_FG,
+                     font=("Segoe UI", 9, "bold"), anchor="w", justify="left").pack(fill="x")
+            tk.Label(row, text=f"{c['author']} \u00b7 {c['date']}", bg=ORCA_PANEL_BG, fg=ORCA_FG_DIM,
+                     font=("Segoe UI", 8), anchor="w").pack(fill="x")
+
+        status_label = ttk.Label(win, text="", style="Hint.TLabel")
+        status_label.pack(anchor="w", padx=14, pady=(0, 2))
+
+        btn_frame = ttk.Frame(win, padding=(14, 0, 14, 14))
+        btn_frame.pack(fill="x")
+
+        def _cancel():
+            win.destroy()
+
+        def _ignore():
+            if remote_sha:
+                _update_check.ignore_update(remote_sha)
+            win.destroy()
+            # Update the shared state directly and re-render the
+            # title-row slot in place -- NOT a full show_landing()
+            # rebuild, and NOT a re-check: the check itself only ever
+            # runs once per process (see _start_update_check), so
+            # dismissing an update must never re-trigger it.
+            self._update_state["status"] = "up_to_date"
+            if self._update_row_refresh is not None:
+                self._update_row_refresh()
+
+        def _set_buttons_enabled(enabled: bool):
+            state = "normal" if enabled else "disabled"
+            for child in btn_frame.winfo_children():
+                child.configure(state=state)
+
+        def _apply_and_restart():
+            _set_buttons_enabled(False)
+            status_label.configure(text="Applying update...")
+
+            def _worker():
+                try:
+                    ok, output = _update_check.apply_update()
+                except Exception as exc:
+                    ok, output = False, str(exc)
+
+                def _finish():
+                    if not ok:
+                        _set_buttons_enabled(True)
+                        status_label.configure(text="")
+                        win.destroy()
+                        self._error("Update Failed", (output or "Unknown error -- see console.").strip()[-800:])
+                        return
+                    # Landing page is where this dialog can ONLY be
+                    # reached from, and show_landing() always clears
+                    # self.cfg/self.cfg_path -- so there's nothing
+                    # unsaved to lose by closing straight away.
+                    win.destroy()
+                    self._restart_app()
+                self.root.after(0, _finish)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_frame, text="Ignore this update", command=_ignore).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_frame, text="Apply and Restart", style="Accent.TButton",
+                   command=_apply_and_restart).pack(side="right")
+
+        win.update_idletasks()
+        win.geometry("480x380")
+        self._center_over_root(win)
+        win.wait_window()
+
+    def _restart_app(self):
+        """
+        Relaunches config_editor.pyw as a fresh process and closes this
+        one -- "Apply and Restart" needs the new commit's own code (this
+        very file may have just changed) running, not this already-
+        loaded process limping on with stale module state. Safe to skip
+        the usual _on_close unsaved-changes prompt entirely: the update
+        dialog is only ever reachable from the landing page, which by
+        definition has cfg_path/cfg cleared (see show_landing()), so
+        there is nothing unsaved to lose.
+        """
+        if _window_anchor is not None:
+            try:
+                self.root.update_idletasks()
+                _window_anchor.save_window_geometry(
+                    "config_editor",
+                    self.root.winfo_x(), self.root.winfo_y(),
+                    self.root.winfo_width(), self.root.winfo_height(),
+                )
+            except Exception:
+                pass
+        try:
+            subprocess.Popen([sys.executable, str(HERE / "config_editor.pyw")], cwd=str(HERE))
+        except Exception:
+            pass
+        self.root.destroy()
 
     def _build_toolbar(self, title=None, on_reload=None, on_save=None, on_save_backup=None, on_load_backup=None):
         bar = tk.Frame(self.container, bg=ORCA_BG)
@@ -2086,7 +2563,8 @@ class SettingsApp:
 
     def _debug_log_dirs(self):
         """
-        Directories to scan for "*_debug.json" dumps: the central
+        Directories to scan for "*_debug.json" dumps (and the update
+        feature's update_check*.log files, which follow the same rule): the central
         debug.dir from configs/orcastrator.json (if set) plus
         post_processors/ itself -- the shared fallback every opted-in
         processor uses when no central dir is set (see
@@ -2133,6 +2611,14 @@ class SettingsApp:
     # standalone-GUI/standalone-processor separation still applies.
     _DEBUG_LOG_RE = re.compile(r"^(?P<processor>.+)_debug(?:_(?P<ts>\d{8}_\d{6}_\d{3}))?\.json$")
 
+    @staticmethod
+    def _update_log_names():
+        """File names of the update feature's activity log (see
+        gui/_update_check.py) -- read from there so the two can't drift."""
+        if _update_check is not None:
+            return tuple(_update_check.LOG_FILE_NAMES)
+        return ("update_check.log", "update_check.previous.log")
+
     def _parse_debug_log_name(self, filename: str):
         """Returns (processor_name, timestamp_or_None), or None if
         `filename` isn't shaped like a debug dump at all."""
@@ -2152,7 +2638,9 @@ class SettingsApp:
         ttk.Label(self.container,
                   text="Read-only. Lists every *_debug.json dump found in the central debug directory "
                        "(OrcaStrator Settings -> Debug) and in post_processors/, the shared default "
-                       "location when no central directory is set. A processor with more than one "
+                       "location when no central directory is set -- plus the update feature's own "
+                       "update_check.log (current run) and update_check.previous.log (the run before). "
+                       "A processor with more than one "
                        "saved log (Debug log mode set to \"multiple\") is grouped under its own name -- "
                        "click it to expand and pick which run to view.",
                   style="Hint.TLabel", wraplength=820, justify="left").pack(anchor="w", pady=(0, 10))
@@ -2205,11 +2693,17 @@ class SettingsApp:
         for d in self._debug_log_dirs():
             if not d.is_dir():
                 continue
-            for f in sorted(d.glob("*_debug*.json")):
+            # Plus the update feature's own plain-text activity log (current
+            # + previous run) -- not a *_debug.json dump, but it lives in
+            # this same directory and is grouped/previewed the same way.
+            update_names = self._update_log_names()
+            candidates = sorted(d.glob("*_debug*.json"))
+            candidates += [d / n for n in update_names if (d / n).is_file()]
+            for f in candidates:
                 resolved = f.resolve()
                 if resolved in seen:
                     continue
-                parsed = self._parse_debug_log_name(f.name)
+                parsed = ("update_check", None) if f.name in update_names else self._parse_debug_log_name(f.name)
                 if not parsed:
                     continue  # doesn't match either debug-dump shape at all
                 seen.add(resolved)
