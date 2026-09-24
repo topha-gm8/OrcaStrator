@@ -551,7 +551,7 @@ def _round_pt(pt):
 
 
 def build_svg_payload(tool_curves: dict, cfg: dict, total_time: float, filament_colors: list = None,
-                       reference_temps=None):
+                       reference_temps=None, reference_temps_by_tool=None):
     """
     Returns (payload, summary) -- summary carries the numbers used for
     the NOTICE message and the debug dump.
@@ -583,6 +583,17 @@ def build_svg_payload(tool_curves: dict, cfg: dict, total_time: float, filament_
     the curve" -- so a caller that doesn't have real event data handy
     doesn't get misleading interpolated values passed off as commanded
     ones.
+
+    reference_temps_by_tool: {tool: [temps]} -- the same real commanded
+    S-values as reference_temps, but kept per tool. Used ONLY by the
+    "stacked" layout, where each lane draws just its own tool's
+    reference lines (e.g. T0 on PLA: 210/160, T1 on PETG: 250/190 -- T0's
+    lane shows only 210 and 160, T1's only 250 and 190) instead of every
+    tool's temps repeated in every lane. Overlay always uses the shared
+    reference_temps (every tool sits in the one band, so the combined set
+    is the only thing that makes sense there). None falls back to
+    reference_temps in every lane, i.e. the old behavior, for any caller
+    that doesn't have per-tool event data handy.
 
     layout ("overlay", the default, or "stacked"): overlay draws every
     tool's curve against the SAME 0..y_max band, so overlapping tools
@@ -743,78 +754,85 @@ def build_svg_payload(tool_curves: dict, cfg: dict, total_time: float, filament_
     # than the (much thinner) line getting buried under a filled curve
     # area.
     reference_shapes = []
-    if bool(cfg.get("reference_lines_enabled", True)) and reference_temps:
-        ref_temps = sorted({t for t in reference_temps if t and t > 0})
-        if ref_temps:
-            ref_hex = str(cfg.get("reference_line_color") or "#ffffff")
-            rr, rg, rb = hex_to_rgb(ref_hex)
-            ref_alpha = max(0.0, min(1.0, float(cfg.get("reference_line_opacity")
-                                                 if cfg.get("reference_line_opacity") is not None else 0.5)))
-            ref_rgba = f"rgba({rr},{rg},{rb},{ref_alpha})"
-            ref_width_px = max(0.5, float(cfg.get("reference_line_width_px") or 1.0))
-            ref_style = str(cfg.get("reference_line_style") or "dashed").strip().lower()
-            if ref_style not in ("solid", "dashed", "dotted"):
-                ref_style = "dashed"
-            # In real pixels -- both renderers apply width_px/dash as
-            # literal final-pixel values via vector-effect="non-scaling-
-            # stroke" (SVG side) / create_line's own always-literal width
-            # (Tk side), so no px-per-canvas-unit conversion is needed
-            # here.
-            ref_dash = {"solid": None, "dotted": [2, 4]}.get(ref_style, [8, 5])
+    # (lane offset, temps to draw in that lane) pairs. Stacked with per-tool
+    # data: one entry per tool, holding only THAT tool's own commanded
+    # temps. Everything else (overlay, or stacked with no per-tool data):
+    # the shared set, once per distinct lane offset.
+    lane_ref_temps = []
+    if stacked and reference_temps_by_tool is not None:
+        for tool in active_tools:
+            tool_temps = sorted({t for t in (reference_temps_by_tool.get(tool) or []) if t and t > 0})
+            if tool_temps:
+                lane_ref_temps.append((lane_offset[tool], tool_temps))
+    elif reference_temps:
+        shared_temps = sorted({t for t in reference_temps if t and t > 0})
+        if shared_temps:
+            lane_ref_temps = [(offset, shared_temps) for offset in sorted(set(lane_offset.values()))]
 
-            labels_enabled = bool(cfg.get("reference_line_labels_enabled", True))
-            # Unlike width_px above, this ISN'T a literal pixel size --
-            # see the "text" shape's own docs (svg_tools.cfg / Tk's
-            # "text" case in _draw_payload) for why a label is sized to
-            # scale WITH the canvas instead. The "_px" name is kept only
-            # for consistency with this section's other fields (a label
-            # this size would read as roughly that many px on THIS
-            # processor's own default ~500px-wide canvas); it'll read
-            # larger/smaller than that on a differently sized one.
-            label_size = max(4.0, float(cfg.get("reference_line_label_size_px") or 24.0))
-            # A small fixed inset from the left edge, in the SAME units
-            # as label_size (rather than a separate constant), so it
-            # scales down together with the label on a small canvas
-            # instead of the label shrinking while the gap to the edge
-            # stays fixed and starts to look disproportionate.
-            label_x_inset = label_size * 0.4
-            # Nudged up off the line itself by roughly half a label
-            # height, so the label sits just above the line (readable on
-            # its own) rather than centered on top of it (harder to read
-            # either the number or the line through the other).
-            label_y_nudge = label_size * 0.6
+    if bool(cfg.get("reference_lines_enabled", True)) and lane_ref_temps:
+        ref_hex = str(cfg.get("reference_line_color") or "#ffffff")
+        rr, rg, rb = hex_to_rgb(ref_hex)
+        ref_alpha = max(0.0, min(1.0, float(cfg.get("reference_line_opacity")
+                                             if cfg.get("reference_line_opacity") is not None else 0.5)))
+        ref_rgba = f"rgba({rr},{rg},{rb},{ref_alpha})"
+        ref_width_px = max(0.5, float(cfg.get("reference_line_width_px") or 1.0))
+        ref_style = str(cfg.get("reference_line_style") or "dashed").strip().lower()
+        if ref_style not in ("solid", "dashed", "dotted"):
+            ref_style = "dashed"
+        # In real pixels -- both renderers apply width_px/dash as
+        # literal final-pixel values via vector-effect="non-scaling-
+        # stroke" (SVG side) / create_line's own always-literal width
+        # (Tk side), so no px-per-canvas-unit conversion is needed
+        # here.
+        ref_dash = {"solid": None, "dotted": [2, 4]}.get(ref_style, [8, 5])
 
-            # One line per distinct temp, repeated in every lane (or
-            # just once, in overlay mode -- lane_offset always has
-            # exactly one distinct value there, whatever it is: 0.0
-            # with no legend, or legend_band_units with one, see the
-            # layout/lane_offset setup above) -- same shared temperature
-            # scale in every lane (see docstring above), so a global
-            # temp's line sits at the same relative height everywhere,
-            # letting a lane's curve be checked against it directly
-            # even for a temp that particular tool never itself used.
-            # Reading the offset(s) straight from lane_offset itself
-            # (rather than re-deriving "0.0 unless stacked" here) is
-            # what keeps this in sync with whatever that setup actually
-            # decided -- duplicating the logic instead is exactly how a
-            # legend's own reservation up there once drifted out of sync
-            # with reference lines still assuming an unshifted 0.0 here.
-            lane_offsets = sorted(set(lane_offset.values()))
-            for offset in lane_offsets:
-                for temp in ref_temps:
-                    y = offset + y_of(temp)
+        labels_enabled = bool(cfg.get("reference_line_labels_enabled", True))
+        # Unlike width_px above, this ISN'T a literal pixel size --
+        # see the "text" shape's own docs (svg_tools.cfg / Tk's
+        # "text" case in _draw_payload) for why a label is sized to
+        # scale WITH the canvas instead. The "_px" name is kept only
+        # for consistency with this section's other fields (a label
+        # this size would read as roughly that many px on THIS
+        # processor's own default ~500px-wide canvas); it'll read
+        # larger/smaller than that on a differently sized one.
+        label_size = max(4.0, float(cfg.get("reference_line_label_size_px") or 24.0))
+        # A small fixed inset from the left edge, in the SAME units
+        # as label_size (rather than a separate constant), so it
+        # scales down together with the label on a small canvas
+        # instead of the label shrinking while the gap to the edge
+        # stays fixed and starts to look disproportionate.
+        label_x_inset = label_size * 0.4
+        # Nudged up off the line itself by roughly half a label
+        # height, so the label sits just above the line (readable on
+        # its own) rather than centered on top of it (harder to read
+        # either the number or the line through the other).
+        label_y_nudge = label_size * 0.6
+
+        # lane_ref_temps (built above) already decided which temps go
+        # in which lane: in stacked layout each lane only gets its own
+        # tool's commanded temps, so a lane's lines say "this is what
+        # THIS tool was told to hit"; in overlay there's just the one
+        # shared band, holding every tool's temps. Offsets come
+        # straight from lane_offset itself (rather than re-deriving
+        # "0.0 unless stacked" here) so this stays in sync with
+        # whatever the layout setup above decided -- a legend's band
+        # once drifted out of sync with reference lines assuming an
+        # unshifted 0.0 exactly that way.
+        for offset, lane_temps in lane_ref_temps:
+            for temp in lane_temps:
+                y = offset + y_of(temp)
+                reference_shapes.append({
+                    "type": "path",
+                    "points": [_round_pt((0.0, y)), _round_pt((CANVAS_X_UNITS, y))],
+                    "color": ref_rgba, "width_px": ref_width_px, "dash": ref_dash,
+                })
+                if labels_enabled:
                     reference_shapes.append({
-                        "type": "path",
-                        "points": [_round_pt((0.0, y)), _round_pt((CANVAS_X_UNITS, y))],
-                        "color": ref_rgba, "width_px": ref_width_px, "dash": ref_dash,
+                        "type": "text",
+                        "x": round(label_x_inset, 2), "y": round(min(y + label_y_nudge, offset + lane_height_units - label_size * 0.5), 2),
+                        "text": f"{temp:g}\u00b0C",
+                        "color": ref_rgba, "size": label_size, "anchor": "start",
                     })
-                    if labels_enabled:
-                        reference_shapes.append({
-                            "type": "text",
-                            "x": round(label_x_inset, 2), "y": round(min(y + label_y_nudge, offset + lane_height_units - label_size * 0.5), 2),
-                            "text": f"{temp:g}\u00b0C",
-                            "color": ref_rgba, "size": label_size, "anchor": "start",
-                        })
 
     shapes = list(reference_shapes)
     tool_summaries = []
@@ -985,6 +1003,13 @@ def process(gcode_path: str) -> None:
     # for why this has to come from the raw events rather than from
     # tool_curves' own (post-ramp, possibly-interrupted) vertex values.
     reference_temps = sorted({temp for events in events_by_tool.values() for _, temp, _ in events if temp > 0})
+    # Same values, kept per tool -- stacked layout draws only a lane's own
+    # tool's temps in that lane (see build_svg_payload()'s
+    # reference_temps_by_tool param doc).
+    reference_temps_by_tool = {
+        tool: sorted({temp for _, temp, _ in events if temp > 0})
+        for tool, events in events_by_tool.items()
+    }
 
     # If the very last temperature event of ANY tool lands at (or within
     # a ramp's own width of) the timeline's right edge -- expected now
@@ -1014,7 +1039,8 @@ def process(gcode_path: str) -> None:
         for tool, events in events_by_tool.items()
     }
 
-    payload, summary = build_svg_payload(tool_curves, cfg, total_time, filament_colors, reference_temps)
+    payload, summary = build_svg_payload(tool_curves, cfg, total_time, filament_colors, reference_temps,
+                                           reference_temps_by_tool)
     print_svg_payload(payload)
 
     debug_data["result"] = "rendered"
@@ -1022,6 +1048,7 @@ def process(gcode_path: str) -> None:
     debug_data["tool_change_time_seconds"] = tool_change_time
     debug_data["naive_time_scale_factor"] = naive_scale
     debug_data["reference_temps"] = reference_temps
+    debug_data["reference_temps_by_tool"] = {str(t): v for t, v in reference_temps_by_tool.items()}
     debug_data["events"] = {
         str(tool): [{"t": t, "target_temp": temp, "blocking": is_blocking} for t, temp, is_blocking in events]
         for tool, events in events_by_tool.items()

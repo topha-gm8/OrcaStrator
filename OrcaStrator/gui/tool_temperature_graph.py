@@ -260,10 +260,9 @@ SECTIONS = [
                      "somewhere in the g-code (0 excluded, since that's 'off', not a temperature) -- e.g. a "
                      "line at 250C and another at 170C if those are the only two S-values used anywhere. "
                      "Makes it easy to see at a glance whether a tool's curve actually reached a temp it was "
-                     "supposed to, versus falling just short. In 'stacked' layout, the same set of lines "
-                     "repeats in every lane at the same relative height, not just the lanes where that "
-                     "particular tool used that particular temp -- so a lane's curve can still be checked "
-                     "against a temp it never itself commanded."),
+                     "supposed to, versus falling just short. In 'stacked' layout, each lane only shows "
+                     "the lines for its OWN tool's commanded temps (e.g. a PLA tool's 210C/160C in its lane, "
+                     "a PETG tool's 250C/190C in its own), at the same relative height as in any other lane."),
         dict(kind="hex_color", label="Color", path=("reference_line_color",), default="#ffffff",
              tooltip="Color of the reference lines. Independent of every tool's own curve color, since a "
                      "reference line isn't tied to any one tool -- it's a shared value across all of them.",
@@ -378,7 +377,12 @@ def build_preview_payload(cfg, controls):
     # they update live the same way curve_style/line_width_px do.
     reference_temps = sorted({temp for events in events_by_tool.values() for _, temp, _ in events if temp > 0})
 
+    reference_temps_by_tool = {
+        tool: sorted({temp for _, temp, _ in events if temp > 0})
+        for tool, events in events_by_tool.items()
+    }
+
     payload, _summary = _ttg.build_svg_payload(tool_curves, cfg, total_time, dbg.get("filament_colors") or [],
-                                                 reference_temps)
+                                                 reference_temps, reference_temps_by_tool)
     payload["title"] = f"{payload.get('title', 'Tool Temperature Graph')} -- preview from {dbg.get('file', 'last run')}"
     return payload
