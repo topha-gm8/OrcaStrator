@@ -290,6 +290,11 @@ OrcaSlicer printer profile should use it, for example:
 "C:\Path\To\Python\pythonw.exe" "C:\Path\To\OrcaStrator\orcastrator.py" --profile=PLA;
 ```
 
+<p align="center">
+	<img src="Media/profile.png" alt="Profile param" width='50%'>
+</p>
+
+
 Printer profiles that don't add `--profile=` at all just keep using
 **Default**, so this is entirely opt-in. A `--profile` name that
 doesn't match any saved profile (a typo, or a profile that's since
